@@ -1,180 +1,466 @@
-import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
-import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ExternalLink } from '@/components/external-link';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Collapsible } from '@/components/ui/collapsible';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { createNote, deleteNote, getNotes, updateNote } from '@/services/notes';
+import type { Note } from '@/services/notes';
 
-export default function TabTwoScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
+export default function NotesScreen() {
   const theme = useTheme();
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
-    },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
-  });
+  useEffect(() => {
+    let isMounted = true;
+    getNotes()
+      .then((storedNotes) => {
+        if (isMounted) {
+          setNotes(storedNotes);
+          setLoadFailed(false);
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setLoadFailed(true);
+          setError('Notizen konnten nicht geladen werden. Bitte versuche es erneut.');
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  async function retryLoading() {
+    setIsLoading(true);
+    setError(null);
+    try {
+      setNotes(await getNotes());
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+      setError('Notizen konnten nicht geladen werden. Bitte versuche es erneut.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function openNewNote() {
+    setEditingId(null);
+    setTitle('');
+    setBody('');
+    setConfirmingDelete(false);
+    setError(null);
+    setEditorOpen(true);
+  }
+
+  function openExistingNote(note: Note) {
+    setEditingId(note.id);
+    setTitle(note.title);
+    setBody(note.body);
+    setConfirmingDelete(false);
+    setError(null);
+    setEditorOpen(true);
+  }
+
+  function closeEditor() {
+    setEditorOpen(false);
+    setConfirmingDelete(false);
+    setError(null);
+  }
+
+  async function saveNote() {
+    if (title.trim().length === 0) {
+      setError('Bitte gib einen Titel für die Notiz ein.');
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      const savedNote =
+        editingId === null
+          ? await createNote(title, body)
+          : await updateNote(editingId, title, body);
+      setNotes((currentNotes) =>
+        [savedNote, ...currentNotes.filter((note) => note.id !== savedNote.id)].sort(
+          (first, second) => second.updatedAt.localeCompare(first.updatedAt),
+        ),
+      );
+      closeEditor();
+    } catch {
+      setError('Die Notiz konnte nicht gespeichert werden. Bitte versuche es erneut.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function removeNote() {
+    if (editingId === null) {
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      await deleteNote(editingId);
+      setNotes((currentNotes) => currentNotes.filter((note) => note.id !== editingId));
+      closeEditor();
+    } catch {
+      setError('Die Notiz konnte nicht gelöscht werden. Bitte versuche es erneut.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
-      <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Explore</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            This starter app includes example{'\n'}code to help you get started.
-          </ThemedText>
-
-          <ExternalLink href="https://docs.expo.dev" asChild>
-            <Pressable style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedView type="backgroundElement" style={styles.linkButton}>
-                <ThemedText type="link">Expo documentation</ThemedText>
-                <SymbolView
-                  tintColor={theme.text}
-                  name={{ ios: 'arrow.up.right.square', android: 'link', web: 'link' }}
-                  size={12}
-                />
-              </ThemedView>
-            </Pressable>
-          </ExternalLink>
-        </ThemedView>
-
-        <ThemedView style={styles.sectionsWrapper}>
-          <Collapsible title="File-based routing">
-            <ThemedText type="small">
-              This app has two screens: <ThemedText type="code">src/app/index.tsx</ThemedText> and{' '}
-              <ThemedText type="code">src/app/explore.tsx</ThemedText>
-            </ThemedText>
-            <ThemedText type="small">
-              The layout file in <ThemedText type="code">src/app/_layout.tsx</ThemedText> sets up
-              the tab navigator.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/router/introduction">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Android, iOS, and web support">
-            <ThemedView type="backgroundElement" style={styles.collapsibleContent}>
-              <ThemedText type="small">
-                You can open this project on Android, iOS, and the web. To open the web version,
-                press <ThemedText type="smallBold">w</ThemedText> in the terminal running this
-                project.
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          {editorOpen ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={closeEditor}
+              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}>
+              <ThemedText type="smallBold" themeColor="accent">
+                Zurück zu Notizen
               </ThemedText>
-              <Image
-                source={require('@/assets/images/tutorial-web.png')}
-                style={styles.imageTutorial}
+            </Pressable>
+          ) : (
+            <ThemedText type="smallBold" themeColor="accent">
+              ORGANIZER
+            </ThemedText>
+          )}
+          <ThemedText type="subtitle">{editorOpen ? 'Notiz' : 'Notizen'}</ThemedText>
+          {!editorOpen && (
+            <ThemedText themeColor="textSecondary">
+              {notes.length === 1 ? '1 Notiz' : `${notes.length} Notizen`}
+            </ThemedText>
+          )}
+        </View>
+
+        {error !== null && (
+          <ThemedView type="backgroundElement" style={styles.errorBanner}>
+            <ThemedText type="small">{error}</ThemedText>
+          </ThemedView>
+        )}
+
+        {editorOpen ? (
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.editorContainer}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.editorContent}>
+              <ThemedText type="small" themeColor="textSecondary">
+                {editingId === null ? 'Neue Notiz' : 'Änderungen werden erst beim Speichern übernommen.'}
+              </ThemedText>
+              <TextInput
+                accessibilityLabel="Titel der Notiz"
+                value={title}
+                onChangeText={setTitle}
+                placeholder="Titel"
+                placeholderTextColor={theme.textSecondary}
+                returnKeyType="next"
+                style={[
+                  styles.titleInput,
+                  {
+                    color: theme.text,
+                    backgroundColor: theme.backgroundElement,
+                  },
+                ]}
               />
-            </ThemedView>
-          </Collapsible>
+              <TextInput
+                accessibilityLabel="Inhalt der Notiz"
+                value={body}
+                onChangeText={setBody}
+                placeholder="Schreibe deine Notiz ..."
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                textAlignVertical="top"
+                style={[
+                  styles.bodyInput,
+                  {
+                    color: theme.text,
+                    backgroundColor: theme.backgroundElement,
+                  },
+                ]}
+              />
 
-          <Collapsible title="Images">
-            <ThemedText type="small">
-              For static images, you can use the <ThemedText type="code">@2x</ThemedText> and{' '}
-              <ThemedText type="code">@3x</ThemedText> suffixes to provide files for different
-              screen densities.
-            </ThemedText>
-            <Image source={require('@/assets/images/react-logo.png')} style={styles.imageReact} />
-            <ExternalLink href="https://reactnative.dev/docs/images">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+              {confirmingDelete && (
+                <ThemedView type="backgroundElement" style={styles.confirmBox}>
+                  <ThemedText type="smallBold">Diese Notiz löschen?</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Das Löschen kann nicht rückgängig gemacht werden.
+                  </ThemedText>
+                  <View style={styles.confirmActions}>
+                    <ActionButton label="Abbrechen" onPress={() => setConfirmingDelete(false)} />
+                    <ActionButton
+                      label="Notiz löschen"
+                      onPress={removeNote}
+                      disabled={isSaving}
+                      destructive
+                    />
+                  </View>
+                </ThemedView>
+              )}
 
-          <Collapsible title="Light and dark mode components">
-            <ThemedText type="small">
-              This template has light and dark mode support. The{' '}
-              <ThemedText type="code">useColorScheme()</ThemedText> hook lets you inspect what the
-              user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+              <View style={styles.actions}>
+                <ActionButton
+                  label={isSaving ? 'Speichern ...' : 'Speichern'}
+                  onPress={saveNote}
+                  disabled={isSaving || title.trim().length === 0}
+                  primary
+                />
+                {editingId !== null && !confirmingDelete && (
+                  <ActionButton
+                    label="Löschen"
+                    onPress={() => setConfirmingDelete(true)}
+                    disabled={isSaving}
+                    destructive
+                  />
+                )}
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        ) : (
+          <View style={styles.listContainer}>
+            <ActionButton label="+  Neue Notiz" onPress={openNewNote} primary />
+            {isLoading ? (
+              <ActivityIndicator
+                accessibilityLabel="Notizen werden geladen"
+                color={theme.accent}
+                style={styles.loading}
+              />
+            ) : loadFailed ? (
+              <View style={styles.loadError}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Die Notizliste ist momentan nicht verfügbar.
+                </ThemedText>
+                <ActionButton label="Erneut versuchen" onPress={retryLoading} />
+              </View>
+            ) : notes.length === 0 ? (
+              <ThemedView type="backgroundElement" style={styles.emptyState}>
+                <ThemedText type="smallBold">Noch keine Notizen</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.emptyHint}>
+                  Erstelle deine erste Notiz mit dem Button oben.
+                </ThemedText>
+              </ThemedView>
+            ) : (
+              <ScrollView contentContainerStyle={styles.noteList}>
+                {notes
+                  .slice()
+                  .sort((first, second) => second.updatedAt.localeCompare(first.updatedAt))
+                  .map((note) => (
+                    <Pressable
+                      key={note.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Notiz öffnen: ${note.title}`}
+                      onPress={() => openExistingNote(note)}
+                      style={({ pressed }) => [styles.noteCard, pressed && styles.pressed]}>
+                      <ThemedView type="backgroundElement" style={styles.noteCardContent}>
+                        <ThemedText type="smallBold" numberOfLines={1}>
+                          {note.title}
+                        </ThemedText>
+                        {note.body.length > 0 && (
+                          <ThemedText
+                            type="small"
+                            themeColor="textSecondary"
+                            numberOfLines={2}
+                            style={styles.notePreview}>
+                            {note.body}
+                          </ThemedText>
+                        )}
+                      </ThemedView>
+                    </Pressable>
+                  ))}
+              </ScrollView>
+            )}
+          </View>
+        )}
+      </SafeAreaView>
+    </ThemedView>
+  );
+}
 
-          <Collapsible title="Animations">
-            <ThemedText type="small">
-              This template includes an example of an animated component. The{' '}
-              <ThemedText type="code">src/components/ui/collapsible.tsx</ThemedText> component uses
-              the powerful <ThemedText type="code">react-native-reanimated</ThemedText> library to
-              animate opening this hint.
-            </ThemedText>
-          </Collapsible>
-        </ThemedView>
-        {Platform.OS === 'web' && <WebBadge />}
-      </ThemedView>
-    </ScrollView>
+type ActionButtonProps = {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+  destructive?: boolean;
+};
+
+function ActionButton({
+  label,
+  onPress,
+  disabled = false,
+  primary = false,
+  destructive = false,
+}: ActionButtonProps) {
+  const theme = useTheme();
+  const backgroundColor = primary ? theme.accent : theme.backgroundElement;
+  const color = primary ? theme.background : destructive ? theme.danger : theme.text;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.actionButton,
+        { backgroundColor },
+        disabled && styles.disabled,
+        pressed && !disabled && styles.pressed,
+      ]}>
+      <ThemedText type="smallBold" style={{ color }}>
+        {label}
+      </ThemedText>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
   container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  linkButton: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
-    justifyContent: 'center',
-    gap: Spacing.one,
+    flex: 1,
     alignItems: 'center',
   },
-  sectionsWrapper: {
-    gap: Spacing.five,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-  },
-  collapsibleContent: {
-    alignItems: 'center',
-  },
-  imageTutorial: {
+  safeArea: {
+    flex: 1,
     width: '100%',
-    aspectRatio: 296 / 171,
-    borderRadius: Spacing.three,
+    maxWidth: MaxContentWidth,
+    paddingHorizontal: Spacing.four,
+  },
+  header: {
+    gap: Spacing.two,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.four,
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    minHeight: 40,
+    justifyContent: 'center',
+  },
+  listContainer: {
+    flex: 1,
+    gap: Spacing.three,
+    paddingBottom: Spacing.three,
+  },
+  noteList: {
+    gap: Spacing.two,
+    paddingBottom: Platform.OS === 'web' ? 96 : Spacing.four,
+  },
+  noteCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  noteCardContent: {
+    minHeight: 64,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
+  notePreview: {
+    marginTop: Spacing.one,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: Spacing.four,
+    borderRadius: 16,
+  },
+  emptyHint: {
+    textAlign: 'center',
     marginTop: Spacing.two,
   },
-  imageReact: {
-    width: 100,
-    height: 100,
-    alignSelf: 'center',
+  loading: {
+    marginTop: Spacing.four,
+  },
+  loadError: {
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.four,
+  },
+  editorContainer: {
+    flex: 1,
+  },
+  editorContent: {
+    gap: Spacing.three,
+    paddingBottom: Platform.OS === 'web' ? 96 : Spacing.four,
+  },
+  titleInput: {
+    minHeight: 56,
+    borderRadius: 14,
+    paddingHorizontal: Spacing.three,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  bodyInput: {
+    minHeight: 220,
+    borderRadius: 14,
+    padding: Spacing.three,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  actions: {
+    gap: Spacing.two,
+    marginTop: Spacing.one,
+  },
+  actionButton: {
+    minHeight: 48,
+    paddingHorizontal: Spacing.three,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  disabled: {
+    opacity: 0.45,
+  },
+  pressed: {
+    opacity: 0.72,
+  },
+  errorBanner: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: 12,
+    marginBottom: Spacing.three,
+  },
+  confirmBox: {
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: 14,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    flexWrap: 'wrap',
+    marginTop: Spacing.two,
   },
 });

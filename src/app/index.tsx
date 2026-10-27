@@ -1,61 +1,74 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
+import { useMemo } from 'react';
+import { PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 export default function HomeScreen() {
+  const theme = useTheme();
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.dx > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx > 72) {
+            router.push('/explore');
+          }
+        },
+      }),
+    [],
+  );
+
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+      <SafeAreaView {...panResponder.panHandlers} style={styles.safeArea}>
+        <View style={styles.content}>
+          <View style={styles.heading}>
+            <ThemedText type="smallBold" themeColor="accent">
+              ORGANIZER
+            </ThemedText>
+            <ThemedText type="title" style={styles.title}>
+              Alles an{'\n'}einem Ort.
+            </ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.subtitle}>
+              Halte deine Gedanken und Notizen fest.
+            </ThemedText>
+          </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+          <View style={styles.voiceSection}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Mikrofon. Sprachsteuerung folgt in einer späteren Phase."
+              accessibilityState={{ disabled: true }}
+              disabled
+              style={[styles.microphoneButton, { backgroundColor: theme.accent }]}>
+              <View style={styles.microphoneIcon}>
+                <View style={styles.microphoneCapsule} />
+                <View style={styles.microphoneCradle} />
+                <View style={styles.microphoneStem} />
+                <View style={styles.microphoneBase} />
+              </View>
+            </Pressable>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.voiceHint}>
+              Sprachsteuerung kommt in einer späteren Phase.
+            </ThemedText>
+          </View>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Meine Notizen öffnen"
+            onPress={() => router.push('/explore')}
+            style={({ pressed }) => [styles.notesButton, pressed && styles.pressed]}>
+            <ThemedText type="smallBold" style={{ color: theme.accent }}>
+              Meine Notizen ansehen
+            </ThemedText>
+          </Pressable>
+        </View>
       </SafeAreaView>
     </ThemedView>
   );
@@ -64,35 +77,90 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    alignItems: 'center',
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
+    width: '100%',
     maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
     paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.five,
+    paddingBottom: Platform.OS === 'web' ? 96 : Spacing.five,
+  },
+  heading: {
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   title: {
     textAlign: 'center',
+    marginTop: Spacing.two,
   },
-  code: {
-    textTransform: 'uppercase',
+  subtitle: {
+    textAlign: 'center',
   },
-  stepContainer: {
+  voiceSection: {
+    alignItems: 'center',
     gap: Spacing.three,
+  },
+  microphoneButton: {
+    width: 216,
+    height: 216,
+    borderRadius: 108,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  microphoneIcon: {
+    alignItems: 'center',
+  },
+  microphoneCapsule: {
+    width: 36,
+    height: 64,
+    borderWidth: 4,
+    borderColor: '#ffffff',
+    borderRadius: 20,
+  },
+  microphoneCradle: {
+    width: 64,
+    height: 36,
+    marginTop: -25,
+    borderColor: '#ffffff',
+    borderWidth: 4,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+  },
+  microphoneStem: {
+    width: 4,
+    height: 16,
+    backgroundColor: '#ffffff',
+  },
+  microphoneBase: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ffffff',
+  },
+  voiceHint: {
+    textAlign: 'center',
+  },
+  notesButton: {
+    minHeight: 56,
     alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+    borderRadius: 18,
+    paddingHorizontal: Spacing.four,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#80808055',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });
