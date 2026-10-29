@@ -1,15 +1,22 @@
 # Organizer
 
-Organizer is a local-first notes app for Android, iOS, and web. The current development phases include:
+Organizer is a local-first notes app for Android, iOS, and web. It currently supports:
 
-- A home screen with a prominent microphone button for temporary voice recording.
-- Microphone permission handling, recording status, stop/cancel controls, and temporary recording cleanup.
-- A persistent local notes list with manual note creation, editing, and deletion.
-- Navigation between the home screen and notes, including a right-swipe gesture on the home screen.
+- Manual note creation, editing, and deletion, stored locally with AsyncStorage.
+- Temporary voice recording and microphone permission handling.
+- A voice-request flow that asks Gemini only to propose one new note. The complete title and content must be explicitly confirmed before the existing local note service saves it.
+- Home-to-notes navigation, including a visible button and a right-swipe gesture.
 - Automatic light and dark theme support.
 
-Notes are stored on the current device using AsyncStorage. They are not synced between devices.
-Audio recordings remain in temporary memory or cache only and are not sent to a service yet. Web recording requires browser microphone access and a secure context such as HTTPS or localhost.
+Notes stay on the current device and are not synced. Audio recordings use temporary storage and are released after processing, cancellation, or failure.
+
+## Gemini configuration and privacy
+
+To try the voice-to-note flow, copy `.env.example` to `.env.local` and add your own Gemini API key to the `EXPO_PUBLIC_GEMINI_API_KEY` variable. Do not commit `.env.local`; the repository's `.gitignore` excludes local environment files. Restart the Expo development server after changing environment variables so the new value is picked up.
+
+The app sends recorded audio to Google's Gemini API for analysis. The request asks the API not to store the interaction, and the app releases its temporary recording after processing. Do not record sensitive information unless you are comfortable transmitting it to Google.
+
+An `EXPO_PUBLIC_` value is embedded in the client bundle and is not a secret. Anyone with access to a distributed iOS, Android, or web app can extract its API key. A private GitHub repository and an ignored `.env.local` file do not protect a key after it has been bundled. The direct client call is suitable only for this private prototype with that exposure understood; use a trusted server-side service to keep a key confidential.
 
 ## Get started
 
@@ -20,4 +27,4 @@ npm install
 npx expo start
 ```
 
-Use the terminal shortcuts to open the app on Android, iOS, or web. Native behavior should be verified on a supported device or simulator.
+Web recording requires browser microphone permission and a secure context such as HTTPS or localhost. Verify native microphone recording and Gemini behavior on supported iOS and Android devices or simulators; a web export alone does not validate native capture.

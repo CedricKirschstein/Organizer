@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -20,6 +21,7 @@ import type { Note } from '@/services/notes';
 
 export default function NotesScreen() {
   const theme = useTheme();
+  const { noteId } = useLocalSearchParams<{ noteId?: string }>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -30,6 +32,12 @@ export default function NotesScreen() {
   const [body, setBody] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const openedNoteIdRef = useRef<string | null>(null);
+  const requestedNoteMissing =
+    typeof noteId === 'string' &&
+    !isLoading &&
+    !loadFailed &&
+    !notes.some((note) => note.id === noteId);
 
   useEffect(() => {
     let isMounted = true;
@@ -57,6 +65,28 @@ export default function NotesScreen() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof noteId !== 'string') {
+      openedNoteIdRef.current = null;
+      return;
+    }
+
+    if (
+      isLoading ||
+      loadFailed ||
+      noteId === openedNoteIdRef.current
+    ) {
+      return;
+    }
+
+    const note = notes.find((item) => item.id === noteId);
+    if (note !== undefined) {
+      openedNoteIdRef.current = noteId;
+      openExistingNote(note);
+      router.setParams({ noteId: undefined });
+    }
+  }, [isLoading, loadFailed, noteId, notes]);
 
   async function retryLoading() {
     setIsLoading(true);
@@ -166,9 +196,11 @@ export default function NotesScreen() {
           )}
         </View>
 
-        {error !== null && (
+        {(error !== null || requestedNoteMissing) && (
           <ThemedView type="backgroundElement" style={styles.errorBanner}>
-            <ThemedText type="small">{error}</ThemedText>
+            <ThemedText type="small">
+              {error ?? 'Die angeforderte Notiz wurde nicht gefunden.'}
+            </ThemedText>
           </ThemedView>
         )}
 

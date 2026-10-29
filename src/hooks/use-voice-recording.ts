@@ -9,9 +9,20 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
+import {
+  createNoteProposal,
+  type GeminiNoteProposal,
+  GeminiServiceError,
+} from '@/services/gemini';
 import { releaseTemporaryRecording } from '@/services/temporary-audio';
 
-export type VoiceRecordingPhase = 'idle' | 'requesting' | 'recording' | 'processing' | 'ready';
+export type VoiceRecordingPhase =
+  | 'idle'
+  | 'requesting'
+  | 'recording'
+  | 'processing'
+  | 'ready'
+  | 'reviewing';
 
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -87,7 +98,7 @@ export function useVoiceRecording() {
   }, [recorder, resetAudioMode]);
 
   const startRecording = useCallback(async () => {
-    if (phaseRef.current !== 'idle' && phaseRef.current !== 'ready') {
+    if (phaseRef.current !== 'idle') {
       return;
     }
 
@@ -123,44 +134,78 @@ export function useVoiceRecording() {
     }
   }, [recorder, releasePendingRecording, resetAudioMode, updatePhase]);
 
-  const finishRecording = useCallback(async () => {
-    if (phaseRef.current !== 'recording') {
+  const finishRecording = useCallback(
+    async (signal?: AbortSignal): Promise<GeminiNoteProposal | null> => {
+      if (phaseRef.current !== 'recording') {
+        return null;
+      }
+
+      updatePhase('processing');
+      setError(null);
+      setNotice(null);
+
+      try {
+        await stopRecorder();
+        const uri = recorder.uri;
+        const status = recorder.getStatus();
+
+        if (uri === null || status.fileSize <= 0) {
+          if (uri !== null) {
+            pendingUriRef.current = uri;
+            setRecordingUri(uri);
+            await releasePendingRecording();
+          }
+          setError('Die Aufnahme war leer. Bitte nimm deine Anfrage erneut auf.');
+          updatePhase('idle');
+          return null;
+        }
+
+        pendingUriRef.current = uri;
+        setRecordingUri(uri);
+        const proposal = await createNoteProposal(
+          {
+            uri,
+            mimeType: Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4',
+          },
+          signal,
+        );
+        await releasePendingRecording();
+        updatePhase('reviewing');
+        setNotice('Prüfe den vollständigen Notizvorschlag, bevor du ihn speicherst.');
+        return proposal;
+      } catch (recordingError) {
+        let cleanupFailed = false;
+        try {
+          await releasePendingRecording();
+        } catch {
+          cleanupFailed = true;
+        }
+
+        await resetAudioMode();
+        updatePhase(recorder.isRecording ? 'recording' : 'idle');
+        if (cleanupFailed) {
+          setError(
+            'Die Anfrage ist fehlgeschlagen und die temporäre Aufnahme konnte nicht freigegeben werden.',
+          );
+        } else if (recordingError instanceof GeminiServiceError) {
+          setError(recordingError.message);
+        } else {
+          setError(getErrorMessage(recordingError));
+        }
+        return null;
+      }
+    },
+    [recorder, releasePendingRecording, resetAudioMode, stopRecorder, updatePhase],
+  );
+
+  const dismissProposal = useCallback(() => {
+    if (phaseRef.current !== 'reviewing') {
       return;
     }
 
-    updatePhase('processing');
-    setError(null);
-
-    try {
-      await stopRecorder();
-      const uri = recorder.uri;
-      const status = recorder.getStatus();
-
-      if (uri === null || status.fileSize <= 0) {
-        if (uri !== null) {
-          pendingUriRef.current = uri;
-          setRecordingUri(uri);
-          await releasePendingRecording();
-        }
-        updatePhase('idle');
-        setError('Die Aufnahme war leer. Bitte nimm deine Anfrage erneut auf.');
-        return;
-      }
-
-      pendingUriRef.current = uri;
-      setRecordingUri(uri);
-      await resetAudioMode();
-      updatePhase('ready');
-      setNotice('Aufnahme bereit für die spätere Übergabe. Es wurden noch keine Daten gesendet.');
-    } catch (recordingError) {
-      console.error('Unable to finish audio recording.', recordingError);
-      await resetAudioMode();
-      updatePhase(
-        recorder.isRecording ? 'recording' : pendingUriRef.current === null ? 'idle' : 'ready',
-      );
-      setError(getErrorMessage(recordingError));
-    }
-  }, [recorder, releasePendingRecording, resetAudioMode, stopRecorder, updatePhase]);
+    updatePhase('idle');
+    setNotice('Vorschlag abgelehnt. Es wurde keine Notiz gespeichert.');
+  }, [updatePhase]);
 
   const cancelRecording = useCallback(async () => {
     if (phaseRef.current !== 'recording') {
@@ -234,5 +279,6 @@ export function useVoiceRecording() {
     finishRecording,
     cancelRecording,
     discardRecording,
+    dismissProposal,
   };
 }
