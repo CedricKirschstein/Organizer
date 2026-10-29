@@ -1,15 +1,41 @@
 import { router } from 'expo-router';
 import { useMemo } from 'react';
-import { PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  PanResponder,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { useVoiceRecording, VoiceRecordingPhase } from '@/hooks/use-voice-recording';
 import { useTheme } from '@/hooks/use-theme';
+
+function formatDuration(durationMillis: number): string {
+  const seconds = Math.floor(durationMillis / 1000);
+  return `${Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+}
 
 export default function HomeScreen() {
   const theme = useTheme();
+  const {
+    phase,
+    recordingUri,
+    durationMillis,
+    error,
+    notice,
+    startRecording,
+    finishRecording,
+    cancelRecording,
+    discardRecording,
+  } = useVoiceRecording();
   const panResponder = useMemo(
     () =>
       PanResponder.create({
@@ -43,20 +69,93 @@ export default function HomeScreen() {
           <View style={styles.voiceSection}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Mikrofon. Sprachsteuerung folgt in einer späteren Phase."
-              accessibilityState={{ disabled: true }}
-              disabled
-              style={[styles.microphoneButton, { backgroundColor: theme.accent }]}>
-              <View style={styles.microphoneIcon}>
-                <View style={styles.microphoneCapsule} />
-                <View style={styles.microphoneCradle} />
-                <View style={styles.microphoneStem} />
-                <View style={styles.microphoneBase} />
-              </View>
+              accessibilityLabel={
+                phase === 'recording'
+                  ? 'Aufnahme stoppen'
+                  : phase === 'ready'
+                    ? 'Neue Aufnahme starten'
+                    : 'Aufnahme starten'
+              }
+              accessibilityState={{
+                disabled: phase === 'requesting' || phase === 'processing',
+              }}
+              disabled={phase === 'requesting' || phase === 'processing'}
+              onPress={phase === 'recording' ? finishRecording : startRecording}
+              style={({ pressed }) => [
+                styles.microphoneButton,
+                {
+                  backgroundColor: phase === 'recording' ? theme.danger : theme.accent,
+                },
+                pressed && styles.pressed,
+              ]}>
+              {phase === 'requesting' || phase === 'processing' ? (
+                <ActivityIndicator color="#ffffff" size="large" />
+              ) : phase === 'recording' ? (
+                <View style={styles.stopIcon} />
+              ) : (
+                <View style={styles.microphoneIcon}>
+                  <View style={styles.microphoneCapsule} />
+                  <View style={styles.microphoneCradle} />
+                  <View style={styles.microphoneStem} />
+                  <View style={styles.microphoneBase} />
+                </View>
+              )}
             </Pressable>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.voiceHint}>
-              Sprachsteuerung kommt in einer späteren Phase.
+
+            <ThemedText
+              accessibilityLiveRegion="polite"
+              type="smallBold"
+              themeColor={phase === 'recording' ? 'danger' : 'text'}>
+              {getRecordingStatus(phase, durationMillis)}
             </ThemedText>
+
+            {phase === 'recording' && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={cancelRecording}
+                style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Aufnahme abbrechen
+                </ThemedText>
+              </Pressable>
+            )}
+
+            {phase === 'ready' && recordingUri !== null && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={discardRecording}
+                style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Aufnahme verwerfen
+                </ThemedText>
+              </Pressable>
+            )}
+
+            {error !== null && (
+              <ThemedText
+                accessibilityLiveRegion="assertive"
+                type="small"
+                themeColor="danger"
+                style={styles.statusMessage}>
+                {error}
+              </ThemedText>
+            )}
+
+            {notice !== null && error === null && (
+              <ThemedText
+                accessibilityLiveRegion="polite"
+                type="small"
+                themeColor="textSecondary"
+                style={styles.statusMessage}>
+                {notice}
+              </ThemedText>
+            )}
+
+            {phase === 'idle' && error === null && notice === null && (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.voiceHint}>
+                Tippe auf das Mikrofon, um deine Anfrage aufzunehmen.
+              </ThemedText>
+            )}
           </View>
 
           <Pressable
@@ -72,6 +171,21 @@ export default function HomeScreen() {
       </SafeAreaView>
     </ThemedView>
   );
+}
+
+function getRecordingStatus(phase: VoiceRecordingPhase, durationMillis: number): string {
+  switch (phase) {
+    case 'requesting':
+      return 'Mikrofon wird vorbereitet ...';
+    case 'recording':
+      return `Aufnahme läuft · ${formatDuration(durationMillis)}`;
+    case 'processing':
+      return 'Aufnahme wird abgeschlossen ...';
+    case 'ready':
+      return 'Aufnahme abgeschlossen';
+    case 'idle':
+      return 'Bereit für deine Anfrage';
+  }
 }
 
 const styles = StyleSheet.create({
@@ -145,8 +259,24 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: '#ffffff',
   },
+  stopIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
   voiceHint: {
     textAlign: 'center',
+  },
+  statusMessage: {
+    maxWidth: 340,
+    textAlign: 'center',
+  },
+  secondaryButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.three,
   },
   notesButton: {
     minHeight: 56,
