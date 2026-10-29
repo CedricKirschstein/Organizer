@@ -44,7 +44,8 @@ export default function HomeScreen() {
     finishRecording,
     cancelRecording,
     discardRecording,
-    dismissProposal,
+    rejectProposal: rejectVoiceProposal,
+    completeProposal,
   } = useVoiceRecording();
   const panResponder = useMemo(
     () =>
@@ -100,7 +101,7 @@ export default function HomeScreen() {
   function rejectProposal() {
     setProposal(null);
     setSaveError(null);
-    dismissProposal();
+    rejectVoiceProposal();
   }
 
   async function confirmProposal() {
@@ -115,7 +116,7 @@ export default function HomeScreen() {
       const note = await createNote(proposal.title, proposal.content);
       setSavedNote(note);
       setProposal(null);
-      dismissProposal();
+      completeProposal();
     } catch {
       setSaveError('Die Notiz konnte nicht gespeichert werden. Prüfe den Speicherplatz und versuche es erneut.');
     } finally {

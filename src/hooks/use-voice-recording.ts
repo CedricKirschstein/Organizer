@@ -198,13 +198,22 @@ export function useVoiceRecording() {
     [recorder, releasePendingRecording, resetAudioMode, stopRecorder, updatePhase],
   );
 
-  const dismissProposal = useCallback(() => {
+  const rejectProposal = useCallback(() => {
     if (phaseRef.current !== 'reviewing') {
       return;
     }
 
     updatePhase('idle');
     setNotice('Vorschlag abgelehnt. Es wurde keine Notiz gespeichert.');
+  }, [updatePhase]);
+
+  const completeProposal = useCallback(() => {
+    if (phaseRef.current !== 'reviewing') {
+      return;
+    }
+
+    updatePhase('idle');
+    setNotice('Notiz gespeichert.');
   }, [updatePhase]);
 
   const cancelRecording = useCallback(async () => {
@@ -279,6 +288,7 @@ export function useVoiceRecording() {
     finishRecording,
     cancelRecording,
     discardRecording,
-    dismissProposal,
+    rejectProposal,
+    completeProposal,
   };
 }

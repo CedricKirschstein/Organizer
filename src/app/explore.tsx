@@ -1,5 +1,5 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -39,32 +39,34 @@ export default function NotesScreen() {
     !loadFailed &&
     !notes.some((note) => note.id === noteId);
 
-  useEffect(() => {
-    let isMounted = true;
-    getNotes()
-      .then((storedNotes) => {
-        if (isMounted) {
-          setNotes(storedNotes);
-          setLoadFailed(false);
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setLoadFailed(true);
-          setError('Notizen konnten nicht geladen werden. Bitte versuche es erneut.');
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      });
+  useFocusEffect(
+    useCallback(() => {
+      let isFocused = true;
+      getNotes()
+        .then((storedNotes) => {
+          if (isFocused) {
+            setNotes(storedNotes);
+            setLoadFailed(false);
+            setError(null);
+          }
+        })
+        .catch(() => {
+          if (isFocused) {
+            setLoadFailed(true);
+            setError('Notizen konnten nicht geladen werden. Bitte versuche es erneut.');
+          }
+        })
+        .finally(() => {
+          if (isFocused) {
+            setIsLoading(false);
+          }
+        });
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+      return () => {
+        isFocused = false;
+      };
+    }, []),
+  );
 
   useEffect(() => {
     if (typeof noteId !== 'string') {
