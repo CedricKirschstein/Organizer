@@ -10,10 +10,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 import {
-  createNoteProposal,
-  type GeminiNoteProposal,
+  interpretVoiceRequest,
+  type GeminiVoiceResult,
   GeminiServiceError,
 } from '@/services/gemini';
+import { getNotes, type Note } from '@/services/notes';
 import { releaseTemporaryRecording } from '@/services/temporary-audio';
 
 export type VoiceRecordingPhase =
@@ -135,7 +136,7 @@ export function useVoiceRecording() {
   }, [recorder, releasePendingRecording, resetAudioMode, updatePhase]);
 
   const finishRecording = useCallback(
-    async (signal?: AbortSignal): Promise<GeminiNoteProposal | null> => {
+    async (signal?: AbortSignal): Promise<GeminiVoiceResult | null> => {
       if (phaseRef.current !== 'recording') {
         return null;
       }
@@ -162,17 +163,32 @@ export function useVoiceRecording() {
 
         pendingUriRef.current = uri;
         setRecordingUri(uri);
-        const proposal = await createNoteProposal(
+        let notes: Note[];
+        try {
+          notes = await getNotes();
+        } catch {
+          throw new GeminiServiceError(
+            'NOTE_STORAGE',
+            'Gespeicherte Notizen konnten nicht geladen werden. Bitte versuche es erneut.',
+          );
+        }
+
+        const result = await interpretVoiceRequest(
           {
             uri,
             mimeType: Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4',
           },
+          notes,
           signal,
         );
         await releasePendingRecording();
         updatePhase('reviewing');
-        setNotice('Prüfe den vollständigen Notizvorschlag, bevor du ihn speicherst.');
-        return proposal;
+        setNotice(
+          result.action === 'create_note'
+            ? 'Prüfe den vollständigen Notizvorschlag, bevor du ihn speicherst.'
+            : 'Prüfe die passende Notiz.',
+        );
+        return result;
       } catch (recordingError) {
         let cleanupFailed = false;
         try {
@@ -214,6 +230,31 @@ export function useVoiceRecording() {
 
     updatePhase('idle');
     setNotice('Notiz gespeichert.');
+  }, [updatePhase]);
+
+  const completeOpenNote = useCallback(
+    (opened: boolean) => {
+      if (phaseRef.current !== 'reviewing') {
+        return;
+      }
+
+      updatePhase('idle');
+      setNotice(
+        opened
+          ? 'Notiz geöffnet.'
+          : 'Keine passende Notiz gefunden. Du kannst es anders formulieren.',
+      );
+    },
+    [updatePhase],
+  );
+
+  const cancelOpenNote = useCallback(() => {
+    if (phaseRef.current !== 'reviewing') {
+      return;
+    }
+
+    updatePhase('idle');
+    setNotice('Notiz wurde nicht geöffnet.');
   }, [updatePhase]);
 
   const cancelRecording = useCallback(async () => {
@@ -290,5 +331,7 @@ export function useVoiceRecording() {
     discardRecording,
     rejectProposal,
     completeProposal,
+    completeOpenNote,
+    cancelOpenNote,
   };
 }

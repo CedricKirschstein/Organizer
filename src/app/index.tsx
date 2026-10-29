@@ -16,7 +16,7 @@ import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useVoiceRecording, type VoiceRecordingPhase } from '@/hooks/use-voice-recording';
 import { useTheme } from '@/hooks/use-theme';
-import type { GeminiNoteProposal } from '@/services/gemini';
+import type { GeminiNoteProposal, GeminiVoiceResult } from '@/services/gemini';
 import { createNote, type Note } from '@/services/notes';
 
 function formatDuration(durationMillis: number): string {
@@ -29,6 +29,7 @@ function formatDuration(durationMillis: number): string {
 export default function HomeScreen() {
   const theme = useTheme();
   const [proposal, setProposal] = useState<GeminiNoteProposal | null>(null);
+  const [openNoteCandidates, setOpenNoteCandidates] = useState<Note[] | null>(null);
   const [savedNote, setSavedNote] = useState<Note | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -46,6 +47,8 @@ export default function HomeScreen() {
     discardRecording,
     rejectProposal: rejectVoiceProposal,
     completeProposal,
+    completeOpenNote,
+    cancelOpenNote,
   } = useVoiceRecording();
   const panResponder = useMemo(
     () =>
@@ -70,6 +73,7 @@ export default function HomeScreen() {
 
   async function startNewRequest() {
     setProposal(null);
+    setOpenNoteCandidates(null);
     setSavedNote(null);
     setSaveError(null);
     await startRecording();
@@ -83,15 +87,42 @@ export default function HomeScreen() {
     const controller = new AbortController();
     requestControllerRef.current = controller;
     try {
-      const noteProposal = await finishRecording(controller.signal);
-      if (noteProposal !== null) {
-        setProposal(noteProposal);
+      const result = await finishRecording(controller.signal);
+      if (result !== null) {
+        handleVoiceResult(result);
       }
     } finally {
       if (requestControllerRef.current === controller) {
         requestControllerRef.current = null;
       }
     }
+  }
+
+  function handleVoiceResult(result: GeminiVoiceResult) {
+    if (result.action === 'create_note') {
+      setProposal(result);
+      setOpenNoteCandidates(null);
+      return;
+    }
+
+    if (result.notes.length === 0) {
+      completeOpenNote(false);
+    } else if (result.notes.length === 1) {
+      openNote(result.notes[0]);
+    } else {
+      setOpenNoteCandidates(result.notes);
+    }
+  }
+
+  function openNote(note: Note) {
+    setOpenNoteCandidates(null);
+    completeOpenNote(true);
+    router.push({ pathname: '/explore', params: { noteId: note.id } });
+  }
+
+  function cancelOpenNoteSelection() {
+    setOpenNoteCandidates(null);
+    cancelOpenNote();
   }
 
   function cancelGeminiRequest() {
@@ -200,6 +231,44 @@ export default function HomeScreen() {
                   )}
                 </Pressable>
               </View>
+            </ThemedView>
+          ) : openNoteCandidates !== null && phase === 'reviewing' ? (
+            <ThemedView type="backgroundElement" style={styles.proposalCard}>
+              <ThemedText type="smallBold" themeColor="accent">
+                WELCHE NOTIZ MÖCHTEST DU ÖFFNEN?
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Mehrere Notizen passen zu deiner Anfrage. Wähle die richtige aus.
+              </ThemedText>
+              <View style={styles.noteChoices}>
+                {openNoteCandidates.map((note) => (
+                  <Pressable
+                    key={note.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Notiz öffnen: ${note.title}`}
+                    onPress={() => openNote(note)}
+                    style={({ pressed }) => [
+                      styles.noteChoice,
+                      { backgroundColor: theme.background },
+                      pressed && styles.pressed,
+                    ]}>
+                    <ThemedText type="smallBold">{note.title}</ThemedText>
+                    {note.body.length > 0 && (
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                        {note.body}
+                      </ThemedText>
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={cancelOpenNoteSelection}
+                style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Abbrechen
+                </ThemedText>
+              </Pressable>
             </ThemedView>
           ) : (
             <View style={styles.voiceSection}>
@@ -456,6 +525,15 @@ const styles = StyleSheet.create({
   proposalActions: {
     flexDirection: 'row',
     gap: Spacing.two,
+  },
+  noteChoices: {
+    gap: Spacing.two,
+  },
+  noteChoice: {
+    gap: Spacing.one,
+    padding: Spacing.three,
+    borderRadius: 14,
+    minHeight: 56,
   },
   proposalButton: {
     flex: 1,
