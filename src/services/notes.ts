@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type Note = {
   id: string;
@@ -8,31 +8,39 @@ export type Note = {
   updatedAt: string;
 };
 
-const STORAGE_KEY = 'organizer.notes.v1';
+const STORAGE_KEY = "organizer.notes.v1";
+const STORAGE_VERSION = 1;
+
+type NoteStorage = {
+  notes: Note[];
+  deletedNote: Note | null;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === "object" && value !== null;
 }
 
 function parseNotes(value: unknown): Note[] {
   if (!Array.isArray(value)) {
-    throw new Error('Die gespeicherten Notizen haben ein ungültiges Format.');
+    throw new Error("Die gespeicherten Notizen haben ein ungültiges Format.");
   }
 
   return value.map((item: unknown) => {
     if (
       !isRecord(item) ||
-      typeof item.id !== 'string' ||
+      typeof item.id !== "string" ||
       item.id.length === 0 ||
-      typeof item.title !== 'string' ||
+      typeof item.title !== "string" ||
       item.title.trim().length === 0 ||
-      typeof item.body !== 'string' ||
-      typeof item.createdAt !== 'string' ||
+      typeof item.body !== "string" ||
+      typeof item.createdAt !== "string" ||
       Number.isNaN(Date.parse(item.createdAt)) ||
-      typeof item.updatedAt !== 'string' ||
+      typeof item.updatedAt !== "string" ||
       Number.isNaN(Date.parse(item.updatedAt))
     ) {
-      throw new Error('Eine gespeicherte Notiz ist beschädigt und konnte nicht geladen werden.');
+      throw new Error(
+        "Eine gespeicherte Notiz ist beschädigt und konnte nicht geladen werden.",
+      );
     }
 
     return {
@@ -45,30 +53,54 @@ function parseNotes(value: unknown): Note[] {
   });
 }
 
-async function readNotes(): Promise<Note[]> {
+function parseNoteStorage(value: unknown): NoteStorage {
+  if (Array.isArray(value)) {
+    return { notes: parseNotes(value), deletedNote: null };
+  }
+
+  if (
+    !isRecord(value) ||
+    value.version !== STORAGE_VERSION ||
+    !Array.isArray(value.notes) ||
+    !(value.deletedNote === null || isRecord(value.deletedNote))
+  ) {
+    throw new Error("Die gespeicherten Notizen haben ein ungültiges Format.");
+  }
+
+  return {
+    notes: parseNotes(value.notes),
+    deletedNote:
+      value.deletedNote === null ? null : parseNotes([value.deletedNote])[0],
+  };
+}
+
+async function readNoteStorage(): Promise<NoteStorage> {
   const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
   if (storedNotes === null) {
-    return [];
+    return { notes: [], deletedNote: null };
   }
 
   let parsedNotes: unknown;
   try {
     parsedNotes = JSON.parse(storedNotes);
   } catch {
-    throw new Error('Die gespeicherten Notizen konnten nicht gelesen werden.');
+    throw new Error("Die gespeicherten Notizen konnten nicht gelesen werden.");
   }
 
-  return parseNotes(parsedNotes);
+  return parseNoteStorage(parsedNotes);
 }
 
-async function writeNotes(notes: Note[]): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+async function writeNoteStorage(storage: NoteStorage): Promise<void> {
+  await AsyncStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ version: STORAGE_VERSION, ...storage }),
+  );
 }
 
 function normalizeTitle(title: string): string {
   const normalizedTitle = title.trim();
   if (normalizedTitle.length === 0) {
-    throw new Error('Bitte gib einen Titel für die Notiz ein.');
+    throw new Error("Bitte gib einen Titel für die Notiz ein.");
   }
   return normalizedTitle;
 }
@@ -82,11 +114,12 @@ function createId(existingNotes: Note[]): string {
 }
 
 export async function getNotes(): Promise<Note[]> {
-  return readNotes();
+  return (await readNoteStorage()).notes;
 }
 
 export async function createNote(title: string, body: string): Promise<Note> {
-  const notes = await readNotes();
+  const storage = await readNoteStorage();
+  const notes = storage.notes;
   const timestamp = new Date().toISOString();
   const note: Note = {
     id: createId(notes),
@@ -96,15 +129,20 @@ export async function createNote(title: string, body: string): Promise<Note> {
     updatedAt: timestamp,
   };
 
-  await writeNotes([note, ...notes]);
+  await writeNoteStorage({ ...storage, notes: [note, ...notes] });
   return note;
 }
 
-export async function updateNote(id: string, title: string, body: string): Promise<Note> {
-  const notes = await readNotes();
+export async function updateNote(
+  id: string,
+  title: string,
+  body: string,
+): Promise<Note> {
+  const storage = await readNoteStorage();
+  const notes = storage.notes;
   const existingNote = notes.find((note) => note.id === id);
   if (!existingNote) {
-    throw new Error('Diese Notiz wurde nicht gefunden.');
+    throw new Error("Diese Notiz wurde nicht gefunden.");
   }
 
   const updatedNote: Note = {
@@ -113,15 +151,94 @@ export async function updateNote(id: string, title: string, body: string): Promi
     body,
     updatedAt: new Date().toISOString(),
   };
-  await writeNotes(notes.map((note) => (note.id === id ? updatedNote : note)));
+  await writeNoteStorage({
+    ...storage,
+    notes: notes.map((note) => (note.id === id ? updatedNote : note)),
+  });
+  return updatedNote;
+}
+
+export async function updateNoteBodyIfUnchanged(
+  expectedNote: Note,
+  body: string,
+): Promise<Note> {
+  const storage = await readNoteStorage();
+  const notes = storage.notes;
+  const currentNote = notes.find((note) => note.id === expectedNote.id);
+  if (
+    !currentNote ||
+    currentNote.title !== expectedNote.title ||
+    currentNote.body !== expectedNote.body ||
+    currentNote.updatedAt !== expectedNote.updatedAt
+  ) {
+    throw new Error(
+      "Diese Notiz wurde inzwischen geändert. Bitte erstelle einen neuen Sprachvorschlag.",
+    );
+  }
+
+  const updatedNote: Note = {
+    ...currentNote,
+    body,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeNoteStorage({
+    ...storage,
+    notes: notes.map((note) =>
+      note.id === currentNote.id ? updatedNote : note,
+    ),
+  });
   return updatedNote;
 }
 
 export async function deleteNote(id: string): Promise<void> {
-  const notes = await readNotes();
+  const storage = await readNoteStorage();
+  const notes = storage.notes;
   if (!notes.some((note) => note.id === id)) {
-    throw new Error('Diese Notiz wurde nicht gefunden.');
+    throw new Error("Diese Notiz wurde nicht gefunden.");
   }
 
-  await writeNotes(notes.filter((note) => note.id !== id));
+  await writeNoteStorage({
+    ...storage,
+    notes: notes.filter((note) => note.id !== id),
+  });
+}
+
+export async function deleteNoteWithUndo(expectedNote: Note): Promise<void> {
+  const storage = await readNoteStorage();
+  const existingNote = storage.notes.find(
+    (note) => note.id === expectedNote.id,
+  );
+  if (
+    existingNote === undefined ||
+    existingNote.title !== expectedNote.title ||
+    existingNote.body !== expectedNote.body ||
+    existingNote.createdAt !== expectedNote.createdAt ||
+    existingNote.updatedAt !== expectedNote.updatedAt
+  ) {
+    throw new Error(
+      "Diese Notiz wurde inzwischen geändert oder gelöscht. Bitte starte eine neue Anfrage.",
+    );
+  }
+
+  await writeNoteStorage({
+    notes: storage.notes.filter((note) => note.id !== existingNote.id),
+    deletedNote: existingNote,
+  });
+}
+
+export async function restoreDeletedNote(id: string): Promise<Note> {
+  const storage = await readNoteStorage();
+  const deletedNote = storage.deletedNote;
+  if (deletedNote === null || deletedNote.id !== id) {
+    throw new Error("Diese Notiz kann nicht mehr wiederhergestellt werden.");
+  }
+  if (storage.notes.some((note) => note.id === id)) {
+    throw new Error("Diese Notiz ist bereits vorhanden.");
+  }
+
+  await writeNoteStorage({
+    notes: [deletedNote, ...storage.notes],
+    deletedNote: null,
+  });
+  return deletedNote;
 }

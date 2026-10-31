@@ -1,23 +1,23 @@
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+    ActivityIndicator,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
-import { createNote, deleteNote, getNotes, updateNote } from '@/services/notes';
-import type { Note } from '@/services/notes';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { MaxContentWidth, Spacing } from "@/constants/theme";
+import { useTheme } from "@/hooks/use-theme";
+import type { Note } from "@/services/notes";
+import { createNote, deleteNote, getNotes, updateNote } from "@/services/notes";
 
 export default function NotesScreen() {
   const theme = useTheme();
@@ -28,13 +28,13 @@ export default function NotesScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openedNoteIdRef = useRef<string | null>(null);
   const requestedNoteMissing =
-    typeof noteId === 'string' &&
+    typeof noteId === "string" &&
     !isLoading &&
     !loadFailed &&
     !notes.some((note) => note.id === noteId);
@@ -53,7 +53,9 @@ export default function NotesScreen() {
         .catch(() => {
           if (isFocused) {
             setLoadFailed(true);
-            setError('Notizen konnten nicht geladen werden. Bitte versuche es erneut.');
+            setError(
+              "Notizen konnten nicht geladen werden. Bitte versuche es erneut.",
+            );
           }
         })
         .finally(() => {
@@ -69,16 +71,12 @@ export default function NotesScreen() {
   );
 
   useEffect(() => {
-    if (typeof noteId !== 'string') {
+    if (typeof noteId !== "string") {
       openedNoteIdRef.current = null;
       return;
     }
 
-    if (
-      isLoading ||
-      loadFailed ||
-      noteId === openedNoteIdRef.current
-    ) {
+    if (isLoading || loadFailed || noteId === openedNoteIdRef.current) {
       return;
     }
 
@@ -98,7 +96,9 @@ export default function NotesScreen() {
       setLoadFailed(false);
     } catch {
       setLoadFailed(true);
-      setError('Notizen konnten nicht geladen werden. Bitte versuche es erneut.');
+      setError(
+        "Notizen konnten nicht geladen werden. Bitte versuche es erneut.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -106,8 +106,8 @@ export default function NotesScreen() {
 
   function openNewNote() {
     setEditingId(null);
-    setTitle('');
-    setBody('');
+    setTitle("");
+    setBody("");
     setConfirmingDelete(false);
     setError(null);
     setEditorOpen(true);
@@ -130,7 +130,7 @@ export default function NotesScreen() {
 
   async function saveNote() {
     if (title.trim().length === 0) {
-      setError('Bitte gib einen Titel für die Notiz ein.');
+      setError("Bitte gib einen Titel für die Notiz ein.");
       return;
     }
 
@@ -142,13 +142,18 @@ export default function NotesScreen() {
           ? await createNote(title, body)
           : await updateNote(editingId, title, body);
       setNotes((currentNotes) =>
-        [savedNote, ...currentNotes.filter((note) => note.id !== savedNote.id)].sort(
-          (first, second) => second.updatedAt.localeCompare(first.updatedAt),
+        [
+          savedNote,
+          ...currentNotes.filter((note) => note.id !== savedNote.id),
+        ].sort((first, second) =>
+          second.updatedAt.localeCompare(first.updatedAt),
         ),
       );
       closeEditor();
     } catch {
-      setError('Die Notiz konnte nicht gespeichert werden. Bitte versuche es erneut.');
+      setError(
+        "Die Notiz konnte nicht gespeichert werden. Bitte versuche es erneut.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -163,10 +168,14 @@ export default function NotesScreen() {
     setError(null);
     try {
       await deleteNote(editingId);
-      setNotes((currentNotes) => currentNotes.filter((note) => note.id !== editingId));
+      setNotes((currentNotes) =>
+        currentNotes.filter((note) => note.id !== editingId),
+      );
       closeEditor();
     } catch {
-      setError('Die Notiz konnte nicht gelöscht werden. Bitte versuche es erneut.');
+      setError(
+        "Die Notiz konnte nicht gelöscht werden. Bitte versuche es erneut.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -180,7 +189,11 @@ export default function NotesScreen() {
             <Pressable
               accessibilityRole="button"
               onPress={closeEditor}
-              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}>
+              style={({ pressed }) => [
+                styles.backButton,
+                pressed && styles.pressed,
+              ]}
+            >
               <ThemedText type="smallBold" themeColor="accent">
                 Zurück zu Notizen
               </ThemedText>
@@ -190,10 +203,12 @@ export default function NotesScreen() {
               ORGANIZER
             </ThemedText>
           )}
-          <ThemedText type="subtitle">{editorOpen ? 'Notiz' : 'Notizen'}</ThemedText>
+          <ThemedText type="subtitle">
+            {editorOpen ? "Notiz" : "Notizen"}
+          </ThemedText>
           {!editorOpen && (
             <ThemedText themeColor="textSecondary">
-              {notes.length === 1 ? '1 Notiz' : `${notes.length} Notizen`}
+              {notes.length === 1 ? "1 Notiz" : `${notes.length} Notizen`}
             </ThemedText>
           )}
         </View>
@@ -201,20 +216,24 @@ export default function NotesScreen() {
         {(error !== null || requestedNoteMissing) && (
           <ThemedView type="backgroundElement" style={styles.errorBanner}>
             <ThemedText type="small">
-              {error ?? 'Die angeforderte Notiz wurde nicht gefunden.'}
+              {error ?? "Die angeforderte Notiz wurde nicht gefunden."}
             </ThemedText>
           </ThemedView>
         )}
 
         {editorOpen ? (
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.editorContainer}>
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.editorContainer}
+          >
             <ScrollView
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.editorContent}>
+              contentContainerStyle={styles.editorContent}
+            >
               <ThemedText type="small" themeColor="textSecondary">
-                {editingId === null ? 'Neue Notiz' : 'Änderungen werden erst beim Speichern übernommen.'}
+                {editingId === null
+                  ? "Neue Notiz"
+                  : "Änderungen werden erst beim Speichern übernommen."}
               </ThemedText>
               <TextInput
                 accessibilityLabel="Titel der Notiz"
@@ -255,7 +274,10 @@ export default function NotesScreen() {
                     Das Löschen kann nicht rückgängig gemacht werden.
                   </ThemedText>
                   <View style={styles.confirmActions}>
-                    <ActionButton label="Abbrechen" onPress={() => setConfirmingDelete(false)} />
+                    <ActionButton
+                      label="Abbrechen"
+                      onPress={() => setConfirmingDelete(false)}
+                    />
                     <ActionButton
                       label="Notiz löschen"
                       onPress={removeNote}
@@ -268,7 +290,7 @@ export default function NotesScreen() {
 
               <View style={styles.actions}>
                 <ActionButton
-                  label={isSaving ? 'Speichern ...' : 'Speichern'}
+                  label={isSaving ? "Speichern ..." : "Speichern"}
                   onPress={saveNote}
                   disabled={isSaving || title.trim().length === 0}
                   primary
@@ -303,7 +325,11 @@ export default function NotesScreen() {
             ) : notes.length === 0 ? (
               <ThemedView type="backgroundElement" style={styles.emptyState}>
                 <ThemedText type="smallBold">Noch keine Notizen</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.emptyHint}>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.emptyHint}
+                >
                   Erstelle deine erste Notiz mit dem Button oben.
                 </ThemedText>
               </ThemedView>
@@ -311,15 +337,24 @@ export default function NotesScreen() {
               <ScrollView contentContainerStyle={styles.noteList}>
                 {notes
                   .slice()
-                  .sort((first, second) => second.updatedAt.localeCompare(first.updatedAt))
+                  .sort((first, second) =>
+                    second.updatedAt.localeCompare(first.updatedAt),
+                  )
                   .map((note) => (
                     <Pressable
                       key={note.id}
                       accessibilityRole="button"
                       accessibilityLabel={`Notiz öffnen: ${note.title}`}
                       onPress={() => openExistingNote(note)}
-                      style={({ pressed }) => [styles.noteCard, pressed && styles.pressed]}>
-                      <ThemedView type="backgroundElement" style={styles.noteCardContent}>
+                      style={({ pressed }) => [
+                        styles.noteCard,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <ThemedView
+                        type="backgroundElement"
+                        style={styles.noteCardContent}
+                      >
                         <ThemedText type="smallBold" numberOfLines={1}>
                           {note.title}
                         </ThemedText>
@@ -328,7 +363,8 @@ export default function NotesScreen() {
                             type="small"
                             themeColor="textSecondary"
                             numberOfLines={2}
-                            style={styles.notePreview}>
+                            style={styles.notePreview}
+                          >
                             {note.body}
                           </ThemedText>
                         )}
@@ -361,7 +397,11 @@ function ActionButton({
 }: ActionButtonProps) {
   const theme = useTheme();
   const backgroundColor = primary ? theme.accent : theme.backgroundElement;
-  const color = primary ? theme.background : destructive ? theme.danger : theme.text;
+  const color = primary
+    ? theme.background
+    : destructive
+      ? theme.danger
+      : theme.text;
 
   return (
     <Pressable
@@ -374,7 +414,8 @@ function ActionButton({
         { backgroundColor },
         disabled && styles.disabled,
         pressed && !disabled && styles.pressed,
-      ]}>
+      ]}
+    >
       <ThemedText type="smallBold" style={{ color }}>
         {label}
       </ThemedText>
@@ -385,11 +426,11 @@ function ActionButton({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
   },
   safeArea: {
     flex: 1,
-    width: '100%',
+    width: "100%",
     maxWidth: MaxContentWidth,
     paddingHorizontal: Spacing.four,
   },
@@ -399,9 +440,9 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   backButton: {
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
     minHeight: 40,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   listContainer: {
     flex: 1,
@@ -410,15 +451,15 @@ const styles = StyleSheet.create({
   },
   noteList: {
     gap: Spacing.two,
-    paddingBottom: Platform.OS === 'web' ? 96 : Spacing.four,
+    paddingBottom: Platform.OS === "web" ? 96 : Spacing.four,
   },
   noteCard: {
     borderRadius: 16,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   noteCardContent: {
     minHeight: 64,
-    justifyContent: 'center',
+    justifyContent: "center",
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
   },
@@ -426,19 +467,19 @@ const styles = StyleSheet.create({
     marginTop: Spacing.one,
   },
   emptyState: {
-    alignItems: 'center',
+    alignItems: "center",
     padding: Spacing.four,
     borderRadius: 16,
   },
   emptyHint: {
-    textAlign: 'center',
+    textAlign: "center",
     marginTop: Spacing.two,
   },
   loading: {
     marginTop: Spacing.four,
   },
   loadError: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: Spacing.three,
     padding: Spacing.four,
   },
@@ -447,14 +488,14 @@ const styles = StyleSheet.create({
   },
   editorContent: {
     gap: Spacing.three,
-    paddingBottom: Platform.OS === 'web' ? 96 : Spacing.four,
+    paddingBottom: Platform.OS === "web" ? 96 : Spacing.four,
   },
   titleInput: {
     minHeight: 56,
     borderRadius: 14,
     paddingHorizontal: Spacing.three,
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   bodyInput: {
     minHeight: 220,
@@ -471,8 +512,8 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: Spacing.three,
     borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   disabled: {
     opacity: 0.45,
@@ -492,9 +533,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   confirmActions: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Spacing.two,
-    flexWrap: 'wrap',
+    flexWrap: "wrap",
     marginTop: Spacing.two,
   },
 });

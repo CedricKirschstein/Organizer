@@ -1,55 +1,62 @@
 import {
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-  useAudioRecorder,
-  useAudioRecorderState,
-  type RecordingOptions,
-} from 'expo-audio';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+    AudioModule,
+    RecordingPresets,
+    setAudioModeAsync,
+    useAudioRecorder,
+    useAudioRecorderState,
+    type RecordingOptions,
+} from "expo-audio";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 
 import {
-  interpretVoiceRequest,
-  type GeminiVoiceResult,
-  GeminiServiceError,
-} from '@/services/gemini';
-import { getNotes, type Note } from '@/services/notes';
-import { releaseTemporaryRecording } from '@/services/temporary-audio';
+    GeminiServiceError,
+    interpretVoiceRequest,
+    type GeminiVoiceResult,
+    type VoiceRequestTimingStage,
+    type VoiceRequestTimings,
+} from "@/services/gemini";
+import { getNotes, type Note } from "@/services/notes";
+import { releaseTemporaryRecording } from "@/services/temporary-audio";
 
 export type VoiceRecordingPhase =
-  | 'idle'
-  | 'requesting'
-  | 'recording'
-  | 'processing'
-  | 'ready'
-  | 'reviewing';
+  | "idle"
+  | "requesting"
+  | "recording"
+  | "processing"
+  | "ready"
+  | "reviewing";
 
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
-  directory: 'cache',
+  directory: "cache",
 };
 
 function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && /NotAllowedError|Permission|denied/i.test(error.message)) {
-    return 'Der Mikrofonzugriff wurde verweigert. Erlaube den Zugriff in den Geräteeinstellungen oder im Browser.';
+  if (
+    error instanceof Error &&
+    /NotAllowedError|Permission|denied/i.test(error.message)
+  ) {
+    return "Der Mikrofonzugriff wurde verweigert. Erlaube den Zugriff in den Geräteeinstellungen oder im Browser.";
   }
 
-  if (Platform.OS === 'web') {
-    return 'Die Aufnahme ist fehlgeschlagen. Prüfe die Mikrofonberechtigung und verwende im Browser eine sichere Verbindung (HTTPS oder localhost).';
+  if (Platform.OS === "web") {
+    return "Die Aufnahme ist fehlgeschlagen. Prüfe die Mikrofonberechtigung und verwende im Browser eine sichere Verbindung (HTTPS oder localhost).";
   }
 
-  return 'Die Aufnahme ist fehlgeschlagen. Prüfe die Mikrofonberechtigung und versuche es erneut.';
+  return "Die Aufnahme ist fehlgeschlagen. Prüfe die Mikrofonberechtigung und versuche es erneut.";
 }
 
 export function useVoiceRecording() {
   const recorder = useAudioRecorder(recordingOptions);
   const recorderState = useAudioRecorderState(recorder);
-  const [phase, setPhase] = useState<VoiceRecordingPhase>('idle');
+  const [phase, setPhase] = useState<VoiceRecordingPhase>("idle");
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const phaseRef = useRef<VoiceRecordingPhase>('idle');
+  const [requestTimings, setRequestTimings] =
+    useState<VoiceRequestTimings | null>(null);
+  const phaseRef = useRef<VoiceRecordingPhase>("idle");
   const pendingUriRef = useRef<string | null>(null);
   const stopPromiseRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
@@ -58,6 +65,20 @@ export function useVoiceRecording() {
     phaseRef.current = nextPhase;
     setPhase(nextPhase);
   }, []);
+
+  const recordTiming = useCallback(
+    (stage: VoiceRequestTimingStage, durationMs: number) => {
+      if (!mountedRef.current) {
+        return;
+      }
+
+      setRequestTimings((currentTimings) => ({
+        ...currentTimings,
+        [stage]: durationMs,
+      }));
+    },
+    [],
+  );
 
   const releasePendingRecording = useCallback(async () => {
     const pendingUri = pendingUriRef.current;
@@ -76,7 +97,10 @@ export function useVoiceRecording() {
     try {
       await setAudioModeAsync({ allowsRecording: false });
     } catch (resetError) {
-      console.error('Unable to reset the audio mode after recording.', resetError);
+      console.error(
+        "Unable to reset the audio mode after recording.",
+        resetError,
+      );
     }
   }, []);
 
@@ -99,37 +123,46 @@ export function useVoiceRecording() {
   }, [recorder, resetAudioMode]);
 
   const startRecording = useCallback(async () => {
-    if (phaseRef.current !== 'idle') {
+    if (phaseRef.current !== "idle") {
       return;
     }
 
-    updatePhase('requesting');
+    updatePhase("requesting");
     setError(null);
     setNotice(null);
+    setRequestTimings(null);
 
     try {
       if (
-        Platform.OS === 'web' &&
-        (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia)
+        Platform.OS === "web" &&
+        (typeof navigator === "undefined" ||
+          !navigator.mediaDevices?.getUserMedia)
       ) {
-        throw new Error('Microphone is not available in this browser context.');
+        throw new Error("Microphone is not available in this browser context.");
       }
 
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        throw new Error('Microphone permission denied.');
+        throw new Error("Microphone permission denied.");
       }
 
       await releasePendingRecording();
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
       await recorder.prepareToRecordAsync();
       recorder.record();
-      updatePhase('recording');
+      updatePhase("recording");
     } catch (recordingError) {
-      console.error('Unable to start audio recording.', recordingError);
+      console.error("Unable to start audio recording.", recordingError);
       await resetAudioMode();
       updatePhase(
-        recorder.isRecording ? 'recording' : pendingUriRef.current === null ? 'idle' : 'ready',
+        recorder.isRecording
+          ? "recording"
+          : pendingUriRef.current === null
+            ? "idle"
+            : "ready",
       );
       setError(getErrorMessage(recordingError));
     }
@@ -137,16 +170,23 @@ export function useVoiceRecording() {
 
   const finishRecording = useCallback(
     async (signal?: AbortSignal): Promise<GeminiVoiceResult | null> => {
-      if (phaseRef.current !== 'recording') {
+      if (phaseRef.current !== "recording") {
         return null;
       }
 
-      updatePhase('processing');
+      const processingStartedAt = Date.now();
+      setRequestTimings({ recordingDuration: recorderState.durationMillis });
+      updatePhase("processing");
       setError(null);
       setNotice(null);
 
       try {
-        await stopRecorder();
+        const stopStartedAt = Date.now();
+        try {
+          await stopRecorder();
+        } finally {
+          recordTiming("stopRecording", Date.now() - stopStartedAt);
+        }
         const uri = recorder.uri;
         const status = recorder.getStatus();
 
@@ -156,37 +196,43 @@ export function useVoiceRecording() {
             setRecordingUri(uri);
             await releasePendingRecording();
           }
-          setError('Die Aufnahme war leer. Bitte nimm deine Anfrage erneut auf.');
-          updatePhase('idle');
+          setError(
+            "Die Aufnahme war leer. Bitte nimm deine Anfrage erneut auf.",
+          );
+          updatePhase("idle");
           return null;
         }
 
         pendingUriRef.current = uri;
         setRecordingUri(uri);
         let notes: Note[];
+        const notesLoadStartedAt = Date.now();
         try {
           notes = await getNotes();
         } catch {
           throw new GeminiServiceError(
-            'NOTE_STORAGE',
-            'Gespeicherte Notizen konnten nicht geladen werden. Bitte versuche es erneut.',
+            "NOTE_STORAGE",
+            "Gespeicherte Notizen konnten nicht geladen werden. Bitte versuche es erneut.",
           );
+        } finally {
+          recordTiming("loadNotes", Date.now() - notesLoadStartedAt);
         }
 
         const result = await interpretVoiceRequest(
           {
             uri,
-            mimeType: Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4',
+            mimeType: Platform.OS === "web" ? "audio/webm" : "audio/mp4",
           },
           notes,
           signal,
+          recordTiming,
         );
         await releasePendingRecording();
-        updatePhase('reviewing');
+        updatePhase("reviewing");
         setNotice(
-          result.action === 'create_note'
-            ? 'Prüfe den vollständigen Notizvorschlag, bevor du ihn speicherst.'
-            : 'Prüfe die passende Notiz.',
+          result.action === "create_note"
+            ? "Prüfe den vollständigen Notizvorschlag, bevor du ihn speicherst."
+            : "Prüfe die passende Notiz.",
         );
         return result;
       } catch (recordingError) {
@@ -198,10 +244,10 @@ export function useVoiceRecording() {
         }
 
         await resetAudioMode();
-        updatePhase(recorder.isRecording ? 'recording' : 'idle');
+        updatePhase(recorder.isRecording ? "recording" : "idle");
         if (cleanupFailed) {
           setError(
-            'Die Anfrage ist fehlgeschlagen und die temporäre Aufnahme konnte nicht freigegeben werden.',
+            "Die Anfrage ist fehlgeschlagen und die temporäre Aufnahme konnte nicht freigegeben werden.",
           );
         } else if (recordingError instanceof GeminiServiceError) {
           setError(recordingError.message);
@@ -209,60 +255,108 @@ export function useVoiceRecording() {
           setError(getErrorMessage(recordingError));
         }
         return null;
+      } finally {
+        recordTiming("totalProcessing", Date.now() - processingStartedAt);
       }
     },
-    [recorder, releasePendingRecording, resetAudioMode, stopRecorder, updatePhase],
+    [
+      recorder,
+      recorderState.durationMillis,
+      releasePendingRecording,
+      recordTiming,
+      resetAudioMode,
+      stopRecorder,
+      updatePhase,
+    ],
   );
 
   const rejectProposal = useCallback(() => {
-    if (phaseRef.current !== 'reviewing') {
+    if (phaseRef.current !== "reviewing") {
       return;
     }
 
-    updatePhase('idle');
-    setNotice('Vorschlag abgelehnt. Es wurde keine Notiz gespeichert.');
+    updatePhase("idle");
+    setNotice("Vorschlag abgelehnt. Es wurde keine Notiz gespeichert.");
   }, [updatePhase]);
 
   const completeProposal = useCallback(() => {
-    if (phaseRef.current !== 'reviewing') {
+    if (phaseRef.current !== "reviewing") {
       return;
     }
 
-    updatePhase('idle');
-    setNotice('Notiz gespeichert.');
+    updatePhase("idle");
+    setNotice("Notiz gespeichert.");
   }, [updatePhase]);
 
   const completeOpenNote = useCallback(
     (opened: boolean) => {
-      if (phaseRef.current !== 'reviewing') {
+      if (phaseRef.current !== "reviewing") {
         return;
       }
 
-      updatePhase('idle');
+      updatePhase("idle");
       setNotice(
         opened
-          ? 'Notiz geöffnet.'
-          : 'Keine passende Notiz gefunden. Du kannst es anders formulieren.',
+          ? "Notiz geöffnet."
+          : "Keine passende Notiz gefunden. Du kannst es anders formulieren.",
       );
     },
     [updatePhase],
   );
 
+  const completeEditReview = useCallback(
+    (saved: boolean) => {
+      if (phaseRef.current !== "reviewing") {
+        return;
+      }
+
+      updatePhase("idle");
+      setNotice(
+        saved
+          ? "Notiz aktualisiert."
+          : "Keine Änderungen angenommen. Die Notiz blieb unverändert.",
+      );
+    },
+    [updatePhase],
+  );
+
+  const completeDeleteNote = useCallback(
+    (outcome: "deleted" | "not_found" | "cancelled") => {
+      if (phaseRef.current !== "reviewing") {
+        return;
+      }
+
+      updatePhase("idle");
+      setNotice(
+        outcome === "deleted"
+          ? "Notiz gelöscht. Du kannst sie auf dem Startbildschirm wiederherstellen."
+          : outcome === "not_found"
+            ? "Keine passende Notiz gefunden. Es wurde nichts gelöscht."
+            : "Löschen abgebrochen. Die Notiz blieb unverändert.",
+      );
+    },
+    [updatePhase],
+  );
+
+  const completeNoteRestore = useCallback(() => {
+    setNotice("Notiz wiederhergestellt.");
+  }, []);
+
   const cancelOpenNote = useCallback(() => {
-    if (phaseRef.current !== 'reviewing') {
+    if (phaseRef.current !== "reviewing") {
       return;
     }
 
-    updatePhase('idle');
-    setNotice('Notiz wurde nicht geöffnet.');
+    updatePhase("idle");
+    setNotice("Notiz wurde nicht geöffnet.");
   }, [updatePhase]);
 
   const cancelRecording = useCallback(async () => {
-    if (phaseRef.current !== 'recording') {
+    if (phaseRef.current !== "recording") {
       return;
     }
 
-    updatePhase('processing');
+    updatePhase("processing");
     setError(null);
     try {
       await stopRecorder();
@@ -272,32 +366,43 @@ export function useVoiceRecording() {
         setRecordingUri(uri);
         await releasePendingRecording();
       }
-      updatePhase(recorder.isRecording ? 'recording' : 'idle');
-      setNotice('Aufnahme verworfen. Du kannst direkt eine neue starten.');
+      updatePhase(recorder.isRecording ? "recording" : "idle");
+      setNotice("Aufnahme verworfen. Du kannst direkt eine neue starten.");
     } catch (recordingError) {
-      console.error('Unable to cancel audio recording.', recordingError);
+      console.error("Unable to cancel audio recording.", recordingError);
       updatePhase(
-        recorder.isRecording ? 'recording' : pendingUriRef.current === null ? 'idle' : 'ready',
+        recorder.isRecording
+          ? "recording"
+          : pendingUriRef.current === null
+            ? "idle"
+            : "ready",
       );
-      setError('Die Aufnahme konnte nicht sauber abgebrochen werden. Bitte versuche es erneut.');
+      setError(
+        "Die Aufnahme konnte nicht sauber abgebrochen werden. Bitte versuche es erneut.",
+      );
     }
   }, [recorder, releasePendingRecording, stopRecorder, updatePhase]);
 
   const discardRecording = useCallback(async () => {
-    if (phaseRef.current !== 'ready') {
+    if (phaseRef.current !== "ready") {
       return;
     }
 
-    updatePhase('processing');
+    updatePhase("processing");
     setError(null);
     try {
       await releasePendingRecording();
-      updatePhase('idle');
-      setNotice('Aufnahme verworfen. Du kannst direkt eine neue starten.');
+      updatePhase("idle");
+      setNotice("Aufnahme verworfen. Du kannst direkt eine neue starten.");
     } catch (recordingError) {
-      console.error('Unable to discard temporary audio recording.', recordingError);
-      updatePhase('ready');
-      setError('Die temporäre Aufnahme konnte nicht freigegeben werden. Bitte versuche es erneut.');
+      console.error(
+        "Unable to discard temporary audio recording.",
+        recordingError,
+      );
+      updatePhase("ready");
+      setError(
+        "Die temporäre Aufnahme konnte nicht freigegeben werden. Bitte versuche es erneut.",
+      );
     }
   }, [releasePendingRecording, updatePhase]);
 
@@ -314,7 +419,10 @@ export function useVoiceRecording() {
           pendingUriRef.current = null;
         }
       })().catch((cleanupError: unknown) => {
-        console.error('Unable to release temporary audio on unmount.', cleanupError);
+        console.error(
+          "Unable to release temporary audio on unmount.",
+          cleanupError,
+        );
       });
     };
   }, [recorder, stopRecorder]);
@@ -325,6 +433,7 @@ export function useVoiceRecording() {
     durationMillis: recorderState.durationMillis,
     error,
     notice,
+    requestTimings,
     startRecording,
     finishRecording,
     cancelRecording,
@@ -332,6 +441,9 @@ export function useVoiceRecording() {
     rejectProposal,
     completeProposal,
     completeOpenNote,
+    completeEditReview,
+    completeDeleteNote,
+    completeNoteRestore,
     cancelOpenNote,
   };
 }
