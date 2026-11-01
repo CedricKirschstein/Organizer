@@ -17,7 +17,14 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ],
+      "package": "com.kircedsteam.organizer"
     },
     "web": {
       "output": "server",
@@ -40,11 +47,28 @@
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Organizer benötigt Zugriff auf deinen Kalender, um Termine anzuzeigen und nach deiner Bestätigung zu erstellen, zu bearbeiten oder zu löschen."
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "193514df-ff21-4647-b3e3-582cb33bbce3"
+      }
+    },
+    "owner": "kirceds-team"
   }
 }
