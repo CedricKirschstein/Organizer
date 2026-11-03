@@ -23,10 +23,30 @@ export type CalendarEventInfo = {
   timeZone: string | null;
 };
 
+export type CreateCalendarEventInput = {
+  calendarId: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  notes: string;
+  timeZone: string;
+  allDay?: boolean;
+  location?: string | null;
+};
+
+export type RestoreCalendarEventResult = {
+  event: CalendarEventInfo;
+  restoredToOriginalCalendar: boolean;
+};
+
 export type CalendarServiceErrorCode =
   | "NATIVE_CALENDAR_UNAVAILABLE"
   | "PERMISSION_REQUIRED"
   | "INVALID_DATE_RANGE"
+  | "NO_WRITABLE_CALENDAR"
+  | "CALENDAR_NOT_FOUND"
+  | "EVENT_NOT_FOUND"
+  | "EVENT_CHANGED"
   | "ACCESS_FAILED";
 
 export type CalendarServiceResult<T> =

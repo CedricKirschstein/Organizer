@@ -13,6 +13,7 @@ import {
     GeminiServiceError,
     interpretVoiceRequest,
     type GeminiVoiceResult,
+    type GeminiProposalDraft,
     type VoiceRequestTimingStage,
     type VoiceRequestTimings,
 } from "@/services/gemini";
@@ -54,8 +55,7 @@ export function useVoiceRecording() {
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [requestTimings, setRequestTimings] =
-    useState<VoiceRequestTimings | null>(null);
+  const requestTimingsRef = useRef<VoiceRequestTimings>({});
   const phaseRef = useRef<VoiceRecordingPhase>("idle");
   const pendingUriRef = useRef<string | null>(null);
   const stopPromiseRef = useRef<Promise<void> | null>(null);
@@ -68,14 +68,7 @@ export function useVoiceRecording() {
 
   const recordTiming = useCallback(
     (stage: VoiceRequestTimingStage, durationMs: number) => {
-      if (!mountedRef.current) {
-        return;
-      }
-
-      setRequestTimings((currentTimings) => ({
-        ...currentTimings,
-        [stage]: durationMs,
-      }));
+      requestTimingsRef.current[stage] = durationMs;
     },
     [],
   );
@@ -122,15 +115,18 @@ export function useVoiceRecording() {
     await resetAudioMode();
   }, [recorder, resetAudioMode]);
 
-  const startRecording = useCallback(async () => {
-    if (phaseRef.current !== "idle") {
+  const startRecording = useCallback(async (forRevision = false) => {
+    if (
+      phaseRef.current !== "idle" &&
+      !(forRevision && phaseRef.current === "reviewing")
+    ) {
       return;
     }
 
     updatePhase("requesting");
     setError(null);
     setNotice(null);
-    setRequestTimings(null);
+    requestTimingsRef.current = {};
 
     try {
       if (
@@ -169,13 +165,18 @@ export function useVoiceRecording() {
   }, [recorder, releasePendingRecording, resetAudioMode, updatePhase]);
 
   const finishRecording = useCallback(
-    async (signal?: AbortSignal): Promise<GeminiVoiceResult | null> => {
+    async (
+      signal?: AbortSignal,
+      revisionDraft?: GeminiProposalDraft,
+    ): Promise<GeminiVoiceResult | null> => {
       if (phaseRef.current !== "recording") {
         return null;
       }
 
       const processingStartedAt = Date.now();
-      setRequestTimings({ recordingDuration: recorderState.durationMillis });
+      requestTimingsRef.current = {
+        recordingDuration: recorderState.durationMillis,
+      };
       updatePhase("processing");
       setError(null);
       setNotice(null);
@@ -226,13 +227,20 @@ export function useVoiceRecording() {
           notes,
           signal,
           recordTiming,
+          revisionDraft,
         );
         await releasePendingRecording();
         updatePhase("reviewing");
         setNotice(
-          result.action === "create_note"
+          revisionDraft !== undefined
+            ? "Überarbeiteter Vorschlag. Bitte prüfe alle Angaben erneut."
+            : result.action === "create_note"
             ? "Prüfe den vollständigen Notizvorschlag, bevor du ihn speicherst."
-            : "Prüfe die passende Notiz.",
+            : result.action === "create_calendar_event"
+              ? "Prüfe alle Termindetails, bevor du den Eintrag bestätigst."
+              : result.action === "delete_calendar_event"
+                ? "Prüfe die passenden Termine, bevor du einen auswählst."
+                : "Prüfe die passende Notiz.",
         );
         return result;
       } catch (recordingError) {
@@ -244,7 +252,13 @@ export function useVoiceRecording() {
         }
 
         await resetAudioMode();
-        updatePhase(recorder.isRecording ? "recording" : "idle");
+        updatePhase(
+          revisionDraft !== undefined
+            ? "reviewing"
+            : recorder.isRecording
+              ? "recording"
+              : "idle",
+        );
         if (cleanupFailed) {
           setError(
             "Die Anfrage ist fehlgeschlagen und die temporäre Aufnahme konnte nicht freigegeben werden.",
@@ -257,6 +271,9 @@ export function useVoiceRecording() {
         return null;
       } finally {
         recordTiming("totalProcessing", Date.now() - processingStartedAt);
+        console.info(
+          `[Voice request timings]\n${JSON.stringify(requestTimingsRef.current, null, 2)}`,
+        );
       }
     },
     [
@@ -333,6 +350,42 @@ export function useVoiceRecording() {
           : outcome === "not_found"
             ? "Keine passende Notiz gefunden. Es wurde nichts gelöscht."
             : "Löschen abgebrochen. Die Notiz blieb unverändert.",
+      );
+    },
+    [updatePhase],
+  );
+
+  const completeCalendarAction = useCallback(
+    (
+      outcome:
+        | "created"
+        | "deleted"
+        | "restored"
+        | "restored_elsewhere"
+        | "cancelled"
+        | "not_found",
+    ) => {
+      const isRestore =
+        outcome === "restored" || outcome === "restored_elsewhere";
+      if (!isRestore && phaseRef.current !== "reviewing") {
+        return;
+      }
+
+      if (phaseRef.current === "reviewing") {
+        updatePhase("idle");
+      }
+      setNotice(
+        outcome === "created"
+          ? "Kalendertermin erstellt."
+          : outcome === "deleted"
+            ? "Kalendertermin gelöscht."
+            : outcome === "restored"
+              ? "Kalendertermin wiederhergestellt."
+              : outcome === "restored_elsewhere"
+                ? "Kalendertermin in einem anderen beschreibbaren Kalender wiederhergestellt. Die ursprüngliche Kalenderzuordnung war nicht verfügbar."
+                : outcome === "not_found"
+                  ? "Kein eindeutig passender Kalendertermin gefunden. Es wurde nichts gelöscht."
+                  : "Kalenderaktion abgebrochen. Der Kalender blieb unverändert.",
       );
     },
     [updatePhase],
@@ -433,7 +486,6 @@ export function useVoiceRecording() {
     durationMillis: recorderState.durationMillis,
     error,
     notice,
-    requestTimings,
     startRecording,
     finishRecording,
     cancelRecording,
@@ -443,6 +495,7 @@ export function useVoiceRecording() {
     completeOpenNote,
     completeEditReview,
     completeDeleteNote,
+    completeCalendarAction,
     completeNoteRestore,
     cancelOpenNote,
   };

@@ -20,10 +20,17 @@ import {
   type VoiceRecordingPhase,
 } from "@/hooks/use-voice-recording";
 import type {
+  GeminiCalendarCreateProposal,
+  GeminiCalendarDeleteCandidate,
   GeminiNoteProposal,
+  GeminiProposalDraft,
   GeminiVoiceResult,
-  VoiceRequestTimingStage,
 } from "@/services/gemini";
+import {
+  createCalendarEvent,
+  deleteCalendarEvent,
+  restoreCalendarEvent,
+} from "@/services/calendar";
 import { applyNotePatches, type NoteTextPatch } from "@/services/note-edits";
 import {
   createNote,
@@ -40,27 +47,32 @@ function formatDuration(durationMillis: number): string {
     .padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
 }
 
-function formatElapsedTime(durationMillis: number): string {
-  return durationMillis < 1000
-    ? `${Math.round(durationMillis)} ms`
-    : `${(durationMillis / 1000).toFixed(2)} s`;
+function formatCalendarDate(value: string): string {
+  return new Intl.DateTimeFormat("de-DE", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(value));
 }
 
-const requestTimingLabels: Record<VoiceRequestTimingStage, string> = {
-  recordingDuration: "Aufnahme",
-  stopRecording: "Aufnahme stoppen",
-  loadNotes: "Lokale Notizen laden",
-  prepareAudio: "Audio vorbereiten",
-  firstGeminiRequest: "Gemini 1 · Anfrage",
-  firstResponseValidation: "App · Antwort 1 prüfen",
-  secondGeminiRequest: "Gemini 2 · Anfrage",
-  secondResponseValidation: "App · Antwort 2 prüfen",
-  totalProcessing: "Gesamt ab Stopp",
-};
+function formatCalendarTime(value: string): string {
+  return new Intl.DateTimeFormat("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
 
 export default function HomeScreen() {
   const theme = useTheme();
   const [proposal, setProposal] = useState<GeminiNoteProposal | null>(null);
+  const [proposalRevisionHistory, setProposalRevisionHistory] = useState<
+    GeminiProposalDraft[]
+  >([]);
+  const [proposalRevisionCount, setProposalRevisionCount] = useState(0);
+  const [proposalRevisionMessage, setProposalRevisionMessage] = useState<
+    string | null
+  >(null);
   const [openNoteProposal, setOpenNoteProposal] = useState<Note | null>(null);
   const [openNoteCandidates, setOpenNoteCandidates] = useState<Note[] | null>(
     null,
@@ -71,6 +83,15 @@ export default function HomeScreen() {
   const [deleteNoteProposal, setDeleteNoteProposal] = useState<Note | null>(
     null,
   );
+  const [calendarCreateProposal, setCalendarCreateProposal] =
+    useState<GeminiCalendarCreateProposal | null>(null);
+  const [calendarDeleteProposal, setCalendarDeleteProposal] =
+    useState<GeminiCalendarDeleteCandidate | null>(null);
+  const [calendarDeleteCandidates, setCalendarDeleteCandidates] =
+    useState<GeminiCalendarDeleteCandidate[] | null>(null);
+  const [calendarActionError, setCalendarActionError] = useState<string | null>(
+    null,
+  );
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editNote, setEditNote] = useState<Note | null>(null);
   const [editPatches, setEditPatches] = useState<NoteTextPatch[] | null>(null);
@@ -78,10 +99,16 @@ export default function HomeScreen() {
   const [editReviewError, setEditReviewError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<Note | null>(null);
   const [deletedNote, setDeletedNote] = useState<Note | null>(null);
+  const [deletedCalendarEvent, setDeletedCalendarEvent] =
+    useState<GeminiCalendarDeleteCandidate | null>(null);
+  const [calendarRestoreError, setCalendarRestoreError] = useState<
+    string | null
+  >(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const requestControllerRef = useRef<AbortController | null>(null);
+  const proposalRevisionRef = useRef<GeminiProposalDraft | null>(null);
   const saveInProgressRef = useRef(false);
   const decidedPatchIndexRef = useRef<number | null>(null);
   const acceptedPatchIndexesRef = useRef(new Set<number>());
@@ -95,7 +122,6 @@ export default function HomeScreen() {
     durationMillis,
     error,
     notice,
-    requestTimings,
     startRecording,
     finishRecording,
     cancelRecording,
@@ -105,6 +131,7 @@ export default function HomeScreen() {
     completeOpenNote,
     completeEditReview,
     completeDeleteNote,
+    completeCalendarAction,
     completeNoteRestore,
     cancelOpenNote,
   } = useVoiceRecording();
@@ -135,6 +162,10 @@ export default function HomeScreen() {
     setOpenNoteCandidates(null);
     setDeleteNoteProposal(null);
     setDeleteError(null);
+    setCalendarCreateProposal(null);
+    setCalendarDeleteProposal(null);
+    setCalendarDeleteCandidates(null);
+    setCalendarActionError(null);
     pendingEditResultsRef.current = null;
     setEditNote(null);
     setEditPatches(null);
@@ -143,8 +174,14 @@ export default function HomeScreen() {
     setEditReviewError(null);
     setSavedNote(null);
     setDeletedNote(null);
+    setDeletedCalendarEvent(null);
+    setCalendarRestoreError(null);
     setRestoreError(null);
     setSaveError(null);
+    proposalRevisionRef.current = null;
+    setProposalRevisionHistory([]);
+    setProposalRevisionCount(0);
+    setProposalRevisionMessage(null);
     await startRecording();
   }
 
@@ -155,12 +192,32 @@ export default function HomeScreen() {
 
     const controller = new AbortController();
     requestControllerRef.current = controller;
+    const revisionDraft = proposalRevisionRef.current ?? undefined;
     try {
-      const result = await finishRecording(controller.signal);
+      const result = await finishRecording(controller.signal, revisionDraft);
       if (result !== null) {
-        handleVoiceResult(result);
+        if (revisionDraft !== undefined) {
+          setProposalRevisionHistory((history) => [...history, revisionDraft]);
+          setProposalRevisionCount((count) => count + 1);
+          setProposalRevisionMessage(
+            `Überarbeiteter Vorschlag (${proposalRevisionCount + 1} von 5). Bitte prüfe ihn erneut.`,
+          );
+          if (revisionDraft.action === "create_note" && result.action === "create_note") {
+            setProposal(result);
+          } else if (
+            revisionDraft.action === "create_calendar_event" &&
+            result.action === "create_calendar_event"
+          ) {
+            setCalendarCreateProposal(result);
+          } else {
+            handleVoiceResult(result);
+          }
+        } else {
+          handleVoiceResult(result);
+        }
       }
     } finally {
+      proposalRevisionRef.current = null;
       if (requestControllerRef.current === controller) {
         requestControllerRef.current = null;
       }
@@ -168,6 +225,27 @@ export default function HomeScreen() {
   }
 
   function handleVoiceResult(result: GeminiVoiceResult) {
+    if (result.action === "create_calendar_event") {
+      setCalendarCreateProposal(result);
+      setCalendarActionError(null);
+      setOpenNoteCandidates(null);
+      pendingEditResultsRef.current = null;
+      return;
+    }
+
+    if (result.action === "delete_calendar_event") {
+      setCalendarActionError(null);
+      setOpenNoteCandidates(null);
+      if (result.candidates.length === 0) {
+        completeCalendarAction("not_found");
+      } else if (result.candidates.length === 1) {
+        setCalendarDeleteProposal(result.candidates[0]);
+      } else {
+        setCalendarDeleteCandidates(result.candidates);
+      }
+      return;
+    }
+
     if (result.action === "create_note") {
       setProposal(result);
       setOpenNoteCandidates(null);
@@ -272,6 +350,82 @@ export default function HomeScreen() {
     completeDeleteNote("cancelled");
   }
 
+  function cancelCalendarReview() {
+    setCalendarCreateProposal(null);
+    setCalendarDeleteProposal(null);
+    setCalendarDeleteCandidates(null);
+    setCalendarActionError(null);
+    clearProposalRevision();
+    completeCalendarAction("cancelled");
+  }
+
+  function selectCalendarDeleteCandidate(
+    candidate: GeminiCalendarDeleteCandidate,
+  ) {
+    setCalendarDeleteCandidates(null);
+    setCalendarDeleteProposal(candidate);
+    setCalendarActionError(null);
+  }
+
+  async function confirmCalendarCreate() {
+    if (calendarCreateProposal === null || saveInProgressRef.current) {
+      return;
+    }
+
+    saveInProgressRef.current = true;
+    setIsSaving(true);
+    setCalendarActionError(null);
+    try {
+      const result = await createCalendarEvent(calendarCreateProposal.event);
+      if (!result.success) {
+        setCalendarActionError(result.error.message);
+        return;
+      }
+      setCalendarCreateProposal(null);
+      clearProposalRevision();
+      completeCalendarAction("created");
+    } catch (calendarError) {
+      setCalendarActionError(
+        calendarError instanceof Error
+          ? calendarError.message
+          : "Der Kalendertermin konnte nicht erstellt werden.",
+      );
+    } finally {
+      saveInProgressRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function confirmCalendarDelete() {
+    if (calendarDeleteProposal === null || saveInProgressRef.current) {
+      return;
+    }
+
+    saveInProgressRef.current = true;
+    setIsSaving(true);
+    setCalendarActionError(null);
+    try {
+      const result = await deleteCalendarEvent(calendarDeleteProposal.event);
+      if (!result.success) {
+        setCalendarActionError(result.error.message);
+        return;
+      }
+      setDeletedCalendarEvent(calendarDeleteProposal);
+      setCalendarRestoreError(null);
+      setCalendarDeleteProposal(null);
+      completeCalendarAction("deleted");
+    } catch (calendarError) {
+      setCalendarActionError(
+        calendarError instanceof Error
+          ? calendarError.message
+          : "Der Kalendertermin konnte nicht gelöscht werden.",
+      );
+    } finally {
+      saveInProgressRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
   async function confirmDeleteNote() {
     if (deleteNoteProposal === null || saveInProgressRef.current) {
       return;
@@ -315,6 +469,39 @@ export default function HomeScreen() {
         restoreFailure instanceof Error
           ? restoreFailure.message
           : "Die Notiz konnte nicht wiederhergestellt werden. Bitte versuche es erneut.",
+      );
+    } finally {
+      saveInProgressRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function restoreCalendar() {
+    if (deletedCalendarEvent === null || saveInProgressRef.current) {
+      return;
+    }
+
+    saveInProgressRef.current = true;
+    setIsSaving(true);
+    setCalendarRestoreError(null);
+    try {
+      const result = await restoreCalendarEvent(deletedCalendarEvent.event);
+      if (!result.success) {
+        setCalendarRestoreError(result.error.message);
+        return;
+      }
+
+      setDeletedCalendarEvent(null);
+      completeCalendarAction(
+        result.data.restoredToOriginalCalendar
+          ? "restored"
+          : "restored_elsewhere",
+      );
+    } catch (restoreFailure) {
+      setCalendarRestoreError(
+        restoreFailure instanceof Error
+          ? restoreFailure.message
+          : "Der Kalendertermin konnte nicht wiederhergestellt werden.",
       );
     } finally {
       saveInProgressRef.current = false;
@@ -417,8 +604,51 @@ export default function HomeScreen() {
 
   function rejectProposal() {
     setProposal(null);
+    clearProposalRevision();
     setSaveError(null);
     rejectVoiceProposal();
+  }
+
+  function clearProposalRevision() {
+    proposalRevisionRef.current = null;
+    setProposalRevisionHistory([]);
+    setProposalRevisionCount(0);
+    setProposalRevisionMessage(null);
+  }
+
+  async function startProposalRevision() {
+    if (
+      proposalRevisionCount >= 5 ||
+      (phase !== "reviewing" && phase !== "idle")
+    ) {
+      return;
+    }
+
+    const draft = proposal ?? calendarCreateProposal;
+    if (draft === null) {
+      return;
+    }
+
+    proposalRevisionRef.current = draft;
+    setProposalRevisionMessage(null);
+    await startRecording(true);
+  }
+
+  function undoProposalRevision() {
+    const previous = proposalRevisionHistory.at(-1);
+    if (previous === undefined || phase !== "reviewing") {
+      return;
+    }
+
+    setProposalRevisionHistory((history) => history.slice(0, -1));
+    setProposalRevisionMessage(
+      "Letzte Überarbeitung zurückgenommen. Du kannst erneut ändern oder den Entwurf bestätigen.",
+    );
+    if (previous.action === "create_note") {
+      setProposal(previous);
+    } else {
+      setCalendarCreateProposal(previous);
+    }
   }
 
   async function confirmProposal() {
@@ -433,6 +663,7 @@ export default function HomeScreen() {
       const note = await createNote(proposal.title, proposal.content);
       setSavedNote(note);
       setProposal(null);
+      clearProposalRevision();
       completeProposal();
     } catch {
       setSaveError(
@@ -447,7 +678,11 @@ export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView {...panResponder.panHandlers} style={styles.safeArea}>
-        <View style={styles.content}>
+        <ScrollView
+          style={styles.homeScroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator
+        >
           <View style={styles.heading}>
             <ThemedText type="smallBold" themeColor="accent">
               ORGANIZER
@@ -460,21 +695,32 @@ export default function HomeScreen() {
             </ThemedText>
           </View>
 
-          {proposal !== null && phase === "reviewing" ? (
+          {proposal !== null &&
+          (phase === "reviewing" || phase === "idle") ? (
             <ThemedView type="backgroundElement" style={styles.proposalCard}>
               <ThemedText type="smallBold" themeColor="accent">
                 VORSCHLAG FÜR EINE NEUE NOTIZ
               </ThemedText>
-              <ScrollView
-                style={styles.proposalScroll}
-                contentContainerStyle={styles.proposalContent}
-                nestedScrollEnabled
-              >
+              {proposalRevisionMessage !== null && (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {proposalRevisionMessage}
+                </ThemedText>
+              )}
+              {error !== null && (
+                <ThemedText
+                  type="small"
+                  themeColor="danger"
+                  accessibilityLiveRegion="assertive"
+                >
+                  {error}
+                </ThemedText>
+              )}
+              <View style={styles.proposalContent}>
                 <ThemedText type="subtitle" style={styles.proposalTitle}>
                   {proposal.title}
                 </ThemedText>
                 <ThemedText>{proposal.content}</ThemedText>
-              </ScrollView>
+              </View>
               {saveError !== null && (
                 <ThemedText
                   type="small"
@@ -534,17 +780,139 @@ export default function HomeScreen() {
                   )}
                 </Pressable>
               </View>
+              <ProposalRevisionControls
+                count={proposalRevisionCount}
+                canUndo={proposalRevisionHistory.length > 0}
+                onRevise={() => void startProposalRevision()}
+                onUndo={undoProposalRevision}
+              />
+            </ThemedView>
+          ) : calendarCreateProposal !== null &&
+            (phase === "reviewing" || phase === "idle") ? (
+            <ThemedView type="backgroundElement" style={styles.proposalCard}>
+              <ThemedText type="smallBold" themeColor="accent">
+                KALENDERTERMIN ERSTELLEN?
+              </ThemedText>
+              {proposalRevisionMessage !== null && (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {proposalRevisionMessage}
+                </ThemedText>
+              )}
+              {error !== null && (
+                <ThemedText
+                  type="small"
+                  themeColor="danger"
+                  accessibilityLiveRegion="assertive"
+                >
+                  {error}
+                </ThemedText>
+              )}
+              <View style={styles.proposalContent}>
+                <ThemedText type="subtitle" style={styles.proposalTitle}>
+                  {calendarCreateProposal.event.title}
+                </ThemedText>
+                <CalendarDetail
+                  label="Datum"
+                  value={formatCalendarDate(
+                    calendarCreateProposal.event.startDate,
+                  )}
+                />
+                <CalendarDetail
+                  label="Zeit"
+                  value={`${formatCalendarTime(calendarCreateProposal.event.startDate)} – ${formatCalendarTime(calendarCreateProposal.event.endDate)}`}
+                />
+                {(calendarCreateProposal.usedDefaultTitle ||
+                  calendarCreateProposal.usedDefaultDateTime) && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {calendarCreateProposal.usedDefaultTitle
+                      ? "Kein Titel erkannt; Organizer verwendet „Neuer Termin“."
+                      : ""}
+                    {calendarCreateProposal.usedDefaultTitle &&
+                    calendarCreateProposal.usedDefaultDateTime
+                      ? " "
+                      : ""}
+                    {calendarCreateProposal.usedDefaultDateTime
+                      ? "Kein eindeutiges Datum oder keine Startzeit erkannt; Organizer schlägt die nächste volle Stunde vor."
+                      : ""}
+                  </ThemedText>
+                )}
+                {calendarCreateProposal.usedDefaultDuration && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Keine gültige Endzeit erkannt; Organizer setzt eine Stunde Dauer
+                    an.
+                  </ThemedText>
+                )}
+                {calendarCreateProposal.event.notes.length > 0 && (
+                  <CalendarDetail
+                    label="Beschreibung"
+                    value={calendarCreateProposal.event.notes}
+                  />
+                )}
+              </View>
+              {calendarActionError !== null && (
+                <ThemedText
+                  type="small"
+                  themeColor="danger"
+                  accessibilityLiveRegion="assertive"
+                >
+                  {calendarActionError}
+                </ThemedText>
+              )}
+              <View style={styles.proposalActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Erstellung des Kalendertermins abbrechen"
+                  disabled={isSaving}
+                  onPress={cancelCalendarReview}
+                  style={({ pressed }) => [
+                    styles.proposalButton,
+                    { backgroundColor: theme.background },
+                    pressed && styles.pressed,
+                    isSaving && styles.disabled,
+                  ]}
+                >
+                  <ThemedText type="smallBold">Abbrechen</ThemedText>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Kalendertermin ${calendarCreateProposal.event.title} erstellen`}
+                  disabled={isSaving}
+                  onPress={() => void confirmCalendarCreate()}
+                  style={({ pressed }) => [
+                    styles.proposalButton,
+                    { backgroundColor: theme.accent },
+                    pressed && styles.pressed,
+                    isSaving && styles.disabled,
+                  ]}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <ThemedText
+                      type="smallBold"
+                      style={[
+                        styles.proposalButtonText,
+                        { color: theme.background },
+                      ]}
+                    >
+                      Erstellen
+                    </ThemedText>
+                  )}
+                </Pressable>
+              </View>
+              <ProposalRevisionControls
+                count={proposalRevisionCount}
+                canUndo={proposalRevisionHistory.length > 0}
+                onRevise={() => void startProposalRevision()}
+                onUndo={undoProposalRevision}
+              />
             </ThemedView>
           ) : openNoteProposal !== null && phase === "reviewing" ? (
             <ThemedView type="backgroundElement" style={styles.proposalCard}>
               <ThemedText type="smallBold" themeColor="accent">
                 DIESE NOTIZ ÖFFNEN?
               </ThemedText>
-              <ScrollView
-                style={styles.proposalScroll}
-                contentContainerStyle={styles.proposalContent}
-                nestedScrollEnabled
-              >
+              <View style={styles.proposalContent}>
                 <ThemedText type="subtitle" style={styles.proposalTitle}>
                   {openNoteProposal.title}
                 </ThemedText>
@@ -553,7 +921,7 @@ export default function HomeScreen() {
                     ? openNoteProposal.body
                     : "Diese Notiz hat keinen Inhalt."}
                 </ThemedText>
-              </ScrollView>
+              </View>
               <View style={styles.proposalActions}>
                 <Pressable
                   accessibilityRole="button"
@@ -602,11 +970,7 @@ export default function HomeScreen() {
                     Abschnitt {editPatchIndex + 1} von {editPatches.length}.
                     Entscheide für jede Änderung einzeln.
                   </ThemedText>
-                  <ScrollView
-                    style={styles.proposalScroll}
-                    contentContainerStyle={styles.proposalContent}
-                    nestedScrollEnabled
-                  >
+                  <View style={styles.proposalContent}>
                     <ThemedText type="small" themeColor="textSecondary">
                       {editPatches[editPatchIndex].beforeContext}
                     </ThemedText>
@@ -633,7 +997,7 @@ export default function HomeScreen() {
                     <ThemedText type="small" themeColor="textSecondary">
                       {editPatches[editPatchIndex].afterContext}
                     </ThemedText>
-                  </ScrollView>
+                  </View>
                   {editReviewError !== null && (
                     <ThemedText
                       type="small"
@@ -748,16 +1112,92 @@ export default function HomeScreen() {
                 </Pressable>
               )}
             </ThemedView>
+          ) : calendarDeleteProposal !== null && phase === "reviewing" ? (
+            <ThemedView type="backgroundElement" style={styles.proposalCard}>
+              <ThemedText type="smallBold" themeColor="danger">
+                DIESEN KALENDERTERMIN LÖSCHEN?
+              </ThemedText>
+              <View style={styles.proposalContent}>
+                <ThemedText type="subtitle" style={styles.proposalTitle}>
+                  {calendarDeleteProposal.event.title}
+                </ThemedText>
+                <CalendarDetail
+                  label="Datum"
+                  value={formatCalendarDate(
+                    calendarDeleteProposal.event.startDate,
+                  )}
+                />
+                <CalendarDetail
+                  label="Zeit"
+                  value={
+                    calendarDeleteProposal.event.allDay
+                      ? "Ganztägig"
+                      : `${formatCalendarTime(calendarDeleteProposal.event.startDate)} – ${formatCalendarTime(calendarDeleteProposal.event.endDate)}`
+                  }
+                />
+                <CalendarDetail
+                  label="Kalender"
+                  value={calendarDeleteProposal.calendarTitle}
+                />
+              </View>
+              {calendarActionError !== null && (
+                <ThemedText
+                  type="small"
+                  themeColor="danger"
+                  accessibilityLiveRegion="assertive"
+                >
+                  {calendarActionError}
+                </ThemedText>
+              )}
+              <View style={styles.proposalActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Löschen des Kalendertermins abbrechen"
+                  disabled={isSaving}
+                  onPress={cancelCalendarReview}
+                  style={({ pressed }) => [
+                    styles.proposalButton,
+                    { backgroundColor: theme.background },
+                    pressed && styles.pressed,
+                    isSaving && styles.disabled,
+                  ]}
+                >
+                  <ThemedText type="smallBold">Abbrechen</ThemedText>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Kalendertermin ${calendarDeleteProposal.event.title} löschen`}
+                  disabled={isSaving}
+                  onPress={() => void confirmCalendarDelete()}
+                  style={({ pressed }) => [
+                    styles.proposalButton,
+                    { backgroundColor: theme.danger },
+                    pressed && styles.pressed,
+                    isSaving && styles.disabled,
+                  ]}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <ThemedText
+                      type="smallBold"
+                      style={[
+                        styles.proposalButtonText,
+                        { color: theme.background },
+                      ]}
+                    >
+                      Termin löschen
+                    </ThemedText>
+                  )}
+                </Pressable>
+              </View>
+            </ThemedView>
           ) : deleteNoteProposal !== null && phase === "reviewing" ? (
             <ThemedView type="backgroundElement" style={styles.proposalCard}>
               <ThemedText type="smallBold" themeColor="danger">
                 DIESE NOTIZ LÖSCHEN?
               </ThemedText>
-              <ScrollView
-                style={styles.proposalScroll}
-                contentContainerStyle={styles.proposalContent}
-                nestedScrollEnabled
-              >
+              <View style={styles.proposalContent}>
                 <ThemedText type="subtitle" style={styles.proposalTitle}>
                   {deleteNoteProposal.title}
                 </ThemedText>
@@ -766,7 +1206,7 @@ export default function HomeScreen() {
                     ? deleteNoteProposal.body
                     : "Diese Notiz hat keinen Inhalt."}
                 </ThemedText>
-              </ScrollView>
+              </View>
               {deleteError !== null && (
                 <ThemedText
                   type="small"
@@ -818,6 +1258,57 @@ export default function HomeScreen() {
                   )}
                 </Pressable>
               </View>
+            </ThemedView>
+          ) : calendarDeleteCandidates !== null && phase === "reviewing" ? (
+            <ThemedView type="backgroundElement" style={styles.proposalCard}>
+              <ThemedText type="smallBold" themeColor="accent">
+                WELCHEN TERMIN MÖCHTEST DU LÖSCHEN?
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Mehrere Termine passen. Wähle den richtigen aus; vor dem
+                Löschen erhältst du noch eine Bestätigung.
+              </ThemedText>
+              <View style={styles.noteChoices}>
+                {calendarDeleteCandidates.map((candidate) => (
+                  <Pressable
+                    key={`${candidate.event.calendarId}:${candidate.event.id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Kalendertermin zum Löschen auswählen: ${candidate.event.title}, ${formatCalendarDate(candidate.event.startDate)}`}
+                    onPress={() => selectCalendarDeleteCandidate(candidate)}
+                    style={({ pressed }) => [
+                      styles.noteChoice,
+                      { backgroundColor: theme.background },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <ThemedText type="smallBold">
+                      {candidate.event.title}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {formatCalendarDate(candidate.event.startDate)}
+                      {" · "}
+                      {candidate.event.allDay
+                        ? "Ganztägig"
+                        : `${formatCalendarTime(candidate.event.startDate)} – ${formatCalendarTime(candidate.event.endDate)}`}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {candidate.calendarTitle}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={cancelCalendarReview}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <ThemedText type="small" themeColor="textSecondary">
+                  Abbrechen
+                </ThemedText>
+              </Pressable>
             </ThemedView>
           ) : openNoteCandidates !== null && phase === "reviewing" ? (
             <ThemedView type="backgroundElement" style={styles.proposalCard}>
@@ -1005,30 +1496,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {requestTimings !== null && (
-            <ThemedView
-              type="backgroundElement"
-              style={styles.requestTimingsCard}
-              accessibilityLabel="Zeitmessung der letzten Sprachverarbeitung"
-            >
-              <ThemedText type="smallBold">Zeitmessung der Anfrage</ThemedText>
-              <View style={styles.requestTimingsGrid}>
-                {(Object.keys(requestTimingLabels) as VoiceRequestTimingStage[])
-                  .filter((stage) => requestTimings[stage] !== undefined)
-                  .map((stage) => (
-                    <View key={stage} style={styles.requestTimingRow}>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {requestTimingLabels[stage]}
-                      </ThemedText>
-                      <ThemedText type="smallBold">
-                        {formatElapsedTime(requestTimings[stage] ?? 0)}
-                      </ThemedText>
-                    </View>
-                  ))}
-              </View>
-            </ThemedView>
-          )}
-
           {deletedNote !== null ? (
             <ThemedView type="backgroundElement" style={styles.savedNoteBanner}>
               <View style={styles.savedNoteText}>
@@ -1055,6 +1522,60 @@ export default function HomeScreen() {
                 accessibilityLabel={`Gelöschte Notiz wiederherstellen: ${deletedNote.title}`}
                 disabled={isSaving}
                 onPress={() => void restoreNote()}
+                style={({ pressed }) => [
+                  styles.viewNoteButton,
+                  pressed && styles.pressed,
+                  isSaving && styles.disabled,
+                ]}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color={theme.accent} />
+                ) : (
+                  <ThemedText type="smallBold" themeColor="accent">
+                    Wiederherstellen
+                  </ThemedText>
+                )}
+              </Pressable>
+            </ThemedView>
+          ) : deletedCalendarEvent !== null ? (
+            <ThemedView type="backgroundElement" style={styles.savedNoteBanner}>
+              <View style={styles.savedNoteText}>
+                <ThemedText type="smallBold">
+                  Kalendertermin gelöscht
+                </ThemedText>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  numberOfLines={1}
+                >
+                  {deletedCalendarEvent.event.title}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {formatCalendarDate(deletedCalendarEvent.event.startDate)}
+                  {" · "}
+                  {deletedCalendarEvent.event.allDay
+                    ? "Ganztägig"
+                    : `${formatCalendarTime(deletedCalendarEvent.event.startDate)} – ${formatCalendarTime(deletedCalendarEvent.event.endDate)}`}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Wiederherstellen legt den Termin neu an; seine ursprüngliche
+                  Kalender-ID kann sich ändern.
+                </ThemedText>
+                {calendarRestoreError !== null && (
+                  <ThemedText
+                    type="small"
+                    themeColor="danger"
+                    accessibilityLiveRegion="assertive"
+                  >
+                    {calendarRestoreError}
+                  </ThemedText>
+                )}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Gelöschten Kalendertermin wiederherstellen: ${deletedCalendarEvent.event.title}`}
+                disabled={isSaving}
+                onPress={() => void restoreCalendar()}
                 style={({ pressed }) => [
                   styles.viewNoteButton,
                   pressed && styles.pressed,
@@ -1121,9 +1642,63 @@ export default function HomeScreen() {
               Meine Notizen ansehen
             </ThemedText>
           </Pressable>
-        </View>
+        </ScrollView>
       </SafeAreaView>
     </ThemedView>
+  );
+}
+
+function CalendarDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.calendarDetail}>
+      <ThemedText type="smallBold">{label}</ThemedText>
+      <ThemedText>{value}</ThemedText>
+    </View>
+  );
+}
+
+function ProposalRevisionControls({
+  count,
+  canUndo,
+  onRevise,
+  onUndo,
+}: {
+  count: number;
+  canUndo: boolean;
+  onRevise: () => void;
+  onUndo: () => void;
+}) {
+  return (
+    <View style={styles.proposalRevisionActions}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Vorschlag sprachlich ändern, ${count} von 5 Änderungen verwendet`}
+        disabled={count >= 5}
+        onPress={onRevise}
+        style={({ pressed }) => [
+          styles.proposalRevisionButton,
+          pressed && styles.pressed,
+          count >= 5 && styles.disabled,
+        ]}
+      >
+        <ThemedText type="smallBold">
+          {count >= 5 ? "Limit erreicht" : `Ändern (${count}/5)`}
+        </ThemedText>
+      </Pressable>
+      {canUndo && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Letzte Änderung am Vorschlag rückgängig machen"
+          onPress={onUndo}
+          style={({ pressed }) => [
+            styles.proposalRevisionButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <ThemedText type="smallBold">Rückgängig</ThemedText>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -1158,8 +1733,11 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
     paddingHorizontal: Spacing.four,
   },
-  content: {
+  homeScroll: {
     flex: 1,
+  },
+  content: {
+    flexGrow: 1,
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: Spacing.five,
@@ -1179,26 +1757,6 @@ const styles = StyleSheet.create({
   voiceSection: {
     alignItems: "center",
     gap: Spacing.three,
-  },
-  requestTimingsCard: {
-    alignSelf: "stretch",
-    gap: Spacing.two,
-    padding: Spacing.three,
-    borderRadius: 16,
-  },
-  requestTimingsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    columnGap: Spacing.two,
-  },
-  requestTimingRow: {
-    width: "48%",
-    minHeight: 28,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: Spacing.one,
   },
   microphoneButton: {
     width: 216,
@@ -1253,9 +1811,6 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: 20,
   },
-  proposalScroll: {
-    maxHeight: 320,
-  },
   proposalContent: {
     gap: Spacing.two,
     paddingBottom: Spacing.two,
@@ -1268,9 +1823,24 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 32,
   },
+  calendarDetail: {
+    gap: Spacing.one,
+  },
   proposalActions: {
     flexDirection: "row",
     gap: Spacing.two,
+  },
+  proposalRevisionActions: {
+    flexDirection: "row",
+    gap: Spacing.two,
+  },
+  proposalRevisionButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: Spacing.two,
   },
   noteChoices: {
     gap: Spacing.two,
