@@ -15,6 +15,7 @@ export type CalendarEventInfo = {
   id: string;
   calendarId: string;
   title: string;
+  isRecurring: boolean;
   startDate: string;
   endDate: string;
   allDay: boolean;
@@ -34,6 +35,12 @@ export type CreateCalendarEventInput = {
   location?: string | null;
 };
 
+export type UpdateCalendarEventInput = {
+  expectedEvent: CalendarEventInfo;
+  startDate: string;
+  endDate: string;
+};
+
 export type RestoreCalendarEventResult = {
   event: CalendarEventInfo;
   restoredToOriginalCalendar: boolean;
@@ -47,6 +54,7 @@ export type CalendarServiceErrorCode =
   | "CALENDAR_NOT_FOUND"
   | "EVENT_NOT_FOUND"
   | "EVENT_CHANGED"
+  | "RECURRING_EVENT"
   | "ACCESS_FAILED";
 
 export type CalendarServiceResult<T> =

@@ -9,6 +9,7 @@ import type {
   CalendarServiceResult,
   CreateCalendarEventInput,
   RestoreCalendarEventResult,
+  UpdateCalendarEventInput,
 } from "@/services/calendar.types";
 
 export type {
@@ -19,6 +20,7 @@ export type {
   CalendarServiceResult,
   CreateCalendarEventInput,
   RestoreCalendarEventResult,
+  UpdateCalendarEventInput,
 } from "@/services/calendar.types";
 
 function success<T>(data: T): CalendarServiceResult<T> {
@@ -90,6 +92,7 @@ function mapCalendarEvent(event: Calendar.ExpoCalendarEvent): CalendarEventInfo 
     id: event.id,
     calendarId: event.calendarId,
     title: event.title,
+    isRecurring: Boolean(event.recurrenceRule),
     startDate: toIsoDate(event.startDate, "startDate"),
     endDate: toIsoDate(event.endDate, "endDate"),
     allDay: event.allDay,
@@ -107,8 +110,13 @@ function isSameEvent(
     first.id === second.id &&
     first.calendarId === second.calendarId &&
     first.title === second.title &&
+    first.isRecurring === second.isRecurring &&
     first.startDate === second.startDate &&
-    first.endDate === second.endDate
+    first.endDate === second.endDate &&
+    first.allDay === second.allDay &&
+    first.location === second.location &&
+    first.notes === second.notes &&
+    first.timeZone === second.timeZone
   );
 }
 
@@ -251,6 +259,112 @@ export async function createCalendarEvent(
       );
     }
     return success(event);
+  } catch (error) {
+    return failure("ACCESS_FAILED", getErrorMessage(error));
+  }
+}
+
+export async function updateCalendarEvent(
+  input: UpdateCalendarEventInput,
+): Promise<CalendarServiceResult<CalendarEventInfo>> {
+  const expectedStart = new Date(input.expectedEvent.startDate);
+  const expectedEnd = new Date(input.expectedEvent.endDate);
+  const startDate = new Date(input.startDate);
+  const endDate = new Date(input.endDate);
+  if (input.expectedEvent.isRecurring) {
+    return failure(
+      "RECURRING_EVENT",
+      "Wiederkehrende Termine können derzeit nicht sicher verschoben werden. Es wurde nichts geändert.",
+    );
+  }
+  if (
+    Number.isNaN(expectedStart.getTime()) ||
+    Number.isNaN(expectedEnd.getTime()) ||
+    Number.isNaN(startDate.getTime()) ||
+    Number.isNaN(endDate.getTime()) ||
+    expectedStart >= expectedEnd ||
+    startDate >= endDate
+  ) {
+    return failure(
+      "INVALID_DATE_RANGE",
+      "Der Terminvorschlag enthält ungültige Zeiten. Es wurde nichts geändert.",
+    );
+  }
+
+  try {
+    const calendarsResult = await getGrantedCalendars();
+    if (!calendarsResult.success) {
+      return calendarsResult;
+    }
+
+    const calendar = calendarsResult.data.find(
+      (item) => item.id === input.expectedEvent.calendarId,
+    );
+    if (calendar === undefined) {
+      return failure(
+        "CALENDAR_NOT_FOUND",
+        "Der Kalender des Termins ist nicht mehr verfügbar. Es wurde nichts geändert.",
+      );
+    }
+    if (!calendar.allowsModifications) {
+      return failure(
+        "NO_WRITABLE_CALENDAR",
+        "Der Kalender dieses Termins ist nicht beschreibbar. Es wurde nichts geändert.",
+      );
+    }
+
+    const currentEvents = await calendar.listEvents(
+      new Date(expectedStart.getTime() - 24 * 60 * 60 * 1000),
+      new Date(expectedEnd.getTime() + 24 * 60 * 60 * 1000),
+    );
+    const currentEvent = currentEvents.find(
+      (event) => event.id === input.expectedEvent.id,
+    );
+    if (currentEvent === undefined) {
+      return failure(
+        "EVENT_NOT_FOUND",
+        "Der Termin wurde nicht mehr gefunden. Es wurde nichts geändert.",
+      );
+    }
+    if (!isSameEvent(mapCalendarEvent(currentEvent), input.expectedEvent)) {
+      return failure(
+        "EVENT_CHANGED",
+        "Der Termin wurde seit der Vorschau geändert. Es wurde nichts geändert. Bitte starte eine neue Anfrage.",
+      );
+    }
+
+    await currentEvent.update({ startDate, endDate });
+    const updatedEvents = await calendar.listEvents(
+      new Date(startDate.getTime() - 24 * 60 * 60 * 1000),
+      new Date(endDate.getTime() + 24 * 60 * 60 * 1000),
+    );
+    const updatedEvent = updatedEvents.find(
+      (event) => event.id === input.expectedEvent.id,
+    );
+    if (updatedEvent === undefined) {
+      return failure(
+        "ACCESS_FAILED",
+        "Der Kalendertermin wurde möglicherweise geändert, konnte danach aber nicht überprüft werden. Bitte prüfe den Kalender.",
+      );
+    }
+
+    const result = mapCalendarEvent(updatedEvent);
+    if (
+      result.startDate !== startDate.toISOString() ||
+      result.endDate !== endDate.toISOString() ||
+      result.calendarId !== input.expectedEvent.calendarId ||
+      result.title !== input.expectedEvent.title ||
+      result.allDay !== input.expectedEvent.allDay ||
+      result.location !== input.expectedEvent.location ||
+      result.notes !== input.expectedEvent.notes ||
+      result.timeZone !== input.expectedEvent.timeZone
+    ) {
+      return failure(
+        "ACCESS_FAILED",
+        "Der Kalender hat die Änderung nicht wie bestätigt gespeichert. Bitte prüfe den Kalender.",
+      );
+    }
+    return success(result);
   } catch (error) {
     return failure("ACCESS_FAILED", getErrorMessage(error));
   }

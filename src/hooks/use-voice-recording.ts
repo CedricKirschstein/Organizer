@@ -240,7 +240,9 @@ export function useVoiceRecording() {
               ? "Prüfe alle Termindetails, bevor du den Eintrag bestätigst."
               : result.action === "delete_calendar_event"
                 ? "Prüfe die passenden Termine, bevor du einen auswählst."
-                : "Prüfe die passende Notiz.",
+                  : result.action === "update_calendar_event"
+                    ? "Prüfe den Termin und die vorgeschlagene neue Zeit, bevor du ihn verschiebst."
+                  : "Prüfe die passende Notiz.",
         );
         return result;
       } catch (recordingError) {
@@ -359,34 +361,38 @@ export function useVoiceRecording() {
     (
       outcome:
         | "created"
+        | "updated"
+        | "update_undone"
         | "deleted"
         | "restored"
         | "restored_elsewhere"
         | "cancelled"
         | "not_found",
     ) => {
-      const isRestore =
-        outcome === "restored" || outcome === "restored_elsewhere";
-      if (!isRestore && phaseRef.current !== "reviewing") {
+      const canCompleteWhileIdle =
+        outcome === "restored" ||
+        outcome === "restored_elsewhere" ||
+        outcome === "update_undone";
+      if (!canCompleteWhileIdle && phaseRef.current !== "reviewing") {
         return;
       }
 
       if (phaseRef.current === "reviewing") {
         updatePhase("idle");
       }
-      setNotice(
-        outcome === "created"
-          ? "Kalendertermin erstellt."
-          : outcome === "deleted"
-            ? "Kalendertermin gelöscht."
-            : outcome === "restored"
-              ? "Kalendertermin wiederhergestellt."
-              : outcome === "restored_elsewhere"
-                ? "Kalendertermin in einem anderen beschreibbaren Kalender wiederhergestellt. Die ursprüngliche Kalenderzuordnung war nicht verfügbar."
-                : outcome === "not_found"
-                  ? "Kein eindeutig passender Kalendertermin gefunden. Es wurde nichts gelöscht."
-                  : "Kalenderaktion abgebrochen. Der Kalender blieb unverändert.",
-      );
+      const noticeByOutcome: Record<typeof outcome, string> = {
+        created: "Kalendertermin erstellt.",
+        updated: "Kalendertermin verschoben.",
+        update_undone: "Verschiebung rückgängig gemacht.",
+        deleted: "Kalendertermin gelöscht.",
+        restored: "Kalendertermin wiederhergestellt.",
+        restored_elsewhere:
+          "Kalendertermin in einem anderen beschreibbaren Kalender wiederhergestellt. Die ursprüngliche Kalenderzuordnung war nicht verfügbar.",
+        cancelled: "Kalenderaktion abgebrochen. Der Kalender blieb unverändert.",
+        not_found:
+          "Kein passender Kalendertermin gefunden. Es wurde nichts geändert.",
+      };
+      setNotice(noticeByOutcome[outcome]);
     },
     [updatePhase],
   );

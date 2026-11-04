@@ -5,6 +5,7 @@ import type {
   CalendarServiceResult,
   CreateCalendarEventInput,
   RestoreCalendarEventResult,
+  UpdateCalendarEventInput,
 } from "@/services/calendar.types";
 
 export type {
@@ -15,6 +16,7 @@ export type {
   CalendarServiceResult,
   CreateCalendarEventInput,
   RestoreCalendarEventResult,
+  UpdateCalendarEventInput,
 } from "@/services/calendar.types";
 
 const unavailableMessage =
@@ -57,6 +59,12 @@ export async function getCalendarEvents(
 
 export async function createCalendarEvent(
   _input: CreateCalendarEventInput,
+): Promise<CalendarServiceResult<CalendarEventInfo>> {
+  return unavailable();
+}
+
+export async function updateCalendarEvent(
+  _input: UpdateCalendarEventInput,
 ): Promise<CalendarServiceResult<CalendarEventInfo>> {
   return unavailable();
 }

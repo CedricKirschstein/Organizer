@@ -22,6 +22,7 @@ import {
 import type {
   GeminiCalendarCreateProposal,
   GeminiCalendarDeleteCandidate,
+  GeminiCalendarUpdateCandidate,
   GeminiNoteProposal,
   GeminiProposalDraft,
   GeminiVoiceResult,
@@ -30,6 +31,7 @@ import {
   createCalendarEvent,
   deleteCalendarEvent,
   restoreCalendarEvent,
+  updateCalendarEvent,
 } from "@/services/calendar";
 import { applyNotePatches, type NoteTextPatch } from "@/services/note-edits";
 import {
@@ -89,9 +91,21 @@ export default function HomeScreen() {
     useState<GeminiCalendarDeleteCandidate | null>(null);
   const [calendarDeleteCandidates, setCalendarDeleteCandidates] =
     useState<GeminiCalendarDeleteCandidate[] | null>(null);
+  const [calendarUpdateProposal, setCalendarUpdateProposal] =
+    useState<GeminiCalendarUpdateCandidate | null>(null);
+  const [calendarUpdateCandidates, setCalendarUpdateCandidates] =
+    useState<GeminiCalendarUpdateCandidate[] | null>(null);
   const [calendarActionError, setCalendarActionError] = useState<string | null>(
     null,
   );
+  const [updatedCalendarEvent, setUpdatedCalendarEvent] = useState<{
+    previousEvent: GeminiCalendarUpdateCandidate["event"];
+    updatedEvent: GeminiCalendarUpdateCandidate["event"];
+    calendarTitle: string;
+  } | null>(null);
+  const [calendarUpdateUndoError, setCalendarUpdateUndoError] = useState<
+    string | null
+  >(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editNote, setEditNote] = useState<Note | null>(null);
   const [editPatches, setEditPatches] = useState<NoteTextPatch[] | null>(null);
@@ -165,7 +179,11 @@ export default function HomeScreen() {
     setCalendarCreateProposal(null);
     setCalendarDeleteProposal(null);
     setCalendarDeleteCandidates(null);
+    setCalendarUpdateProposal(null);
+    setCalendarUpdateCandidates(null);
     setCalendarActionError(null);
+    setUpdatedCalendarEvent(null);
+    setCalendarUpdateUndoError(null);
     pendingEditResultsRef.current = null;
     setEditNote(null);
     setEditPatches(null);
@@ -242,6 +260,20 @@ export default function HomeScreen() {
         setCalendarDeleteProposal(result.candidates[0]);
       } else {
         setCalendarDeleteCandidates(result.candidates);
+      }
+      return;
+    }
+
+    if (result.action === "update_calendar_event") {
+      setCalendarActionError(null);
+      setCalendarDeleteProposal(null);
+      setCalendarDeleteCandidates(null);
+      if (result.candidates.length === 0) {
+        completeCalendarAction("not_found");
+      } else if (result.candidates.length === 1) {
+        setCalendarUpdateProposal(result.candidates[0]);
+      } else {
+        setCalendarUpdateCandidates(result.candidates);
       }
       return;
     }
@@ -354,6 +386,8 @@ export default function HomeScreen() {
     setCalendarCreateProposal(null);
     setCalendarDeleteProposal(null);
     setCalendarDeleteCandidates(null);
+    setCalendarUpdateProposal(null);
+    setCalendarUpdateCandidates(null);
     setCalendarActionError(null);
     clearProposalRevision();
     completeCalendarAction("cancelled");
@@ -364,6 +398,14 @@ export default function HomeScreen() {
   ) {
     setCalendarDeleteCandidates(null);
     setCalendarDeleteProposal(candidate);
+    setCalendarActionError(null);
+  }
+
+  function selectCalendarUpdateCandidate(
+    candidate: GeminiCalendarUpdateCandidate,
+  ) {
+    setCalendarUpdateCandidates(null);
+    setCalendarUpdateProposal(candidate);
     setCalendarActionError(null);
   }
 
@@ -419,6 +461,77 @@ export default function HomeScreen() {
         calendarError instanceof Error
           ? calendarError.message
           : "Der Kalendertermin konnte nicht gelöscht werden.",
+      );
+    } finally {
+      saveInProgressRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function confirmCalendarUpdate() {
+    if (calendarUpdateProposal === null || saveInProgressRef.current) {
+      return;
+    }
+
+    saveInProgressRef.current = true;
+    setIsSaving(true);
+    setCalendarActionError(null);
+    try {
+      const result = await updateCalendarEvent({
+        expectedEvent: calendarUpdateProposal.event,
+        startDate: calendarUpdateProposal.proposedStartDate,
+        endDate: calendarUpdateProposal.proposedEndDate,
+      });
+      if (!result.success) {
+        setCalendarActionError(result.error.message);
+        return;
+      }
+      setUpdatedCalendarEvent({
+        previousEvent: calendarUpdateProposal.event,
+        updatedEvent: result.data,
+        calendarTitle: calendarUpdateProposal.calendarTitle,
+      });
+      setCalendarUpdateUndoError(null);
+      setCalendarUpdateProposal(null);
+      clearProposalRevision();
+      completeCalendarAction("updated");
+    } catch (calendarError) {
+      setCalendarActionError(
+        calendarError instanceof Error
+          ? calendarError.message
+          : "Der Kalendertermin konnte nicht verschoben werden.",
+      );
+    } finally {
+      saveInProgressRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function undoCalendarUpdate() {
+    if (updatedCalendarEvent === null || saveInProgressRef.current) {
+      return;
+    }
+
+    saveInProgressRef.current = true;
+    setIsSaving(true);
+    setCalendarUpdateUndoError(null);
+    try {
+      const result = await updateCalendarEvent({
+        expectedEvent: updatedCalendarEvent.updatedEvent,
+        startDate: updatedCalendarEvent.previousEvent.startDate,
+        endDate: updatedCalendarEvent.previousEvent.endDate,
+      });
+      if (!result.success) {
+        setCalendarUpdateUndoError(result.error.message);
+        return;
+      }
+      setUpdatedCalendarEvent(null);
+      completeCalendarAction("update_undone");
+    } catch (calendarError) {
+      setCalendarUpdateUndoError(
+        calendarError instanceof Error
+          ? calendarError.message
+          : "Die Terminverschiebung konnte nicht rückgängig gemacht werden.",
       );
     } finally {
       saveInProgressRef.current = false;
@@ -907,6 +1020,116 @@ export default function HomeScreen() {
                 onUndo={undoProposalRevision}
               />
             </ThemedView>
+          ) : calendarUpdateProposal !== null && phase === "reviewing" ? (
+            <ThemedView type="backgroundElement" style={styles.proposalCard}>
+              <ThemedText type="smallBold" themeColor="accent">
+                DIESEN KALENDERTERMIN VERSCHIEBEN?
+              </ThemedText>
+              <View style={styles.proposalContent}>
+                <ThemedText type="subtitle" style={styles.proposalTitle}>
+                  {calendarUpdateProposal.event.title}
+                </ThemedText>
+                <CalendarDetail
+                  label="Bisheriges Datum"
+                  value={formatCalendarDate(
+                    calendarUpdateProposal.event.startDate,
+                  )}
+                />
+                <CalendarDetail
+                  label="Bisherige Zeit"
+                  value={
+                    calendarUpdateProposal.event.allDay
+                      ? "Ganztägig"
+                      : `${formatCalendarTime(calendarUpdateProposal.event.startDate)} – ${formatCalendarTime(calendarUpdateProposal.event.endDate)}`
+                  }
+                />
+                <CalendarDetail
+                  label="Neues Datum"
+                  value={formatCalendarDate(
+                    calendarUpdateProposal.proposedStartDate,
+                  )}
+                />
+                <CalendarDetail
+                  label="Neue Zeit"
+                  value={
+                    calendarUpdateProposal.event.allDay
+                      ? "Ganztägig"
+                      : `${formatCalendarTime(calendarUpdateProposal.proposedStartDate)} – ${formatCalendarTime(calendarUpdateProposal.proposedEndDate)}`
+                  }
+                />
+                <CalendarDetail
+                  label="Kalender"
+                  value={calendarUpdateProposal.calendarTitle}
+                />
+                {calendarUpdateProposal.event.location !== null &&
+                  calendarUpdateProposal.event.location.length > 0 && (
+                    <CalendarDetail
+                      label="Ort"
+                      value={calendarUpdateProposal.event.location}
+                    />
+                  )}
+                {calendarUpdateProposal.event.isRecurring && (
+                  <ThemedText type="small" themeColor="danger">
+                    Wiederkehrende Termine können derzeit nicht sicher
+                    verschoben werden.
+                  </ThemedText>
+                )}
+              </View>
+              {calendarActionError !== null && (
+                <ThemedText
+                  type="small"
+                  themeColor="danger"
+                  accessibilityLiveRegion="assertive"
+                >
+                  {calendarActionError}
+                </ThemedText>
+              )}
+              <View style={styles.proposalActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Verschieben des Kalendertermins abbrechen"
+                  disabled={isSaving}
+                  onPress={cancelCalendarReview}
+                  style={({ pressed }) => [
+                    styles.proposalButton,
+                    { backgroundColor: theme.background },
+                    pressed && styles.pressed,
+                    isSaving && styles.disabled,
+                  ]}
+                >
+                  <ThemedText type="smallBold">Abbrechen</ThemedText>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Kalendertermin ${calendarUpdateProposal.event.title} verschieben`}
+                  disabled={
+                    isSaving || calendarUpdateProposal.event.isRecurring
+                  }
+                  onPress={() => void confirmCalendarUpdate()}
+                  style={({ pressed }) => [
+                    styles.proposalButton,
+                    { backgroundColor: theme.accent },
+                    pressed && styles.pressed,
+                    (isSaving || calendarUpdateProposal.event.isRecurring) &&
+                      styles.disabled,
+                  ]}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <ThemedText
+                      type="smallBold"
+                      style={[
+                        styles.proposalButtonText,
+                        { color: theme.background },
+                      ]}
+                    >
+                      Termin verschieben
+                    </ThemedText>
+                  )}
+                </Pressable>
+              </View>
+            </ThemedView>
           ) : openNoteProposal !== null && phase === "reviewing" ? (
             <ThemedView type="backgroundElement" style={styles.proposalCard}>
               <ThemedText type="smallBold" themeColor="accent">
@@ -1310,6 +1533,64 @@ export default function HomeScreen() {
                 </ThemedText>
               </Pressable>
             </ThemedView>
+          ) : calendarUpdateCandidates !== null && phase === "reviewing" ? (
+            <ThemedView type="backgroundElement" style={styles.proposalCard}>
+              <ThemedText type="smallBold" themeColor="accent">
+                WELCHEN TERMIN MÖCHTEST DU VERSCHIEBEN?
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Mehrere Termine passen. Wähle den richtigen aus; danach kannst
+                du die vorgeschlagene Verschiebung prüfen.
+              </ThemedText>
+              <View style={styles.noteChoices}>
+                {calendarUpdateCandidates.map((candidate) => (
+                  <Pressable
+                    key={`${candidate.event.calendarId}:${candidate.event.id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Kalendertermin zum Verschieben auswählen: ${candidate.event.title}, ${formatCalendarDate(candidate.event.startDate)}`}
+                    onPress={() => selectCalendarUpdateCandidate(candidate)}
+                    style={({ pressed }) => [
+                      styles.noteChoice,
+                      { backgroundColor: theme.background },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <ThemedText type="smallBold">
+                      {candidate.event.title}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Bisher: {formatCalendarDate(candidate.event.startDate)}
+                      {" · "}
+                      {candidate.event.allDay
+                        ? "Ganztägig"
+                        : `${formatCalendarTime(candidate.event.startDate)} – ${formatCalendarTime(candidate.event.endDate)}`}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Neu: {formatCalendarDate(candidate.proposedStartDate)}
+                      {" · "}
+                      {candidate.event.allDay
+                        ? "Ganztägig"
+                        : `${formatCalendarTime(candidate.proposedStartDate)} – ${formatCalendarTime(candidate.proposedEndDate)}`}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {candidate.calendarTitle}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={cancelCalendarReview}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <ThemedText type="small" themeColor="textSecondary">
+                  Abbrechen
+                </ThemedText>
+              </Pressable>
+            </ThemedView>
           ) : openNoteCandidates !== null && phase === "reviewing" ? (
             <ThemedView type="backgroundElement" style={styles.proposalCard}>
               <ThemedText type="smallBold" themeColor="accent">
@@ -1533,6 +1814,56 @@ export default function HomeScreen() {
                 ) : (
                   <ThemedText type="smallBold" themeColor="accent">
                     Wiederherstellen
+                  </ThemedText>
+                )}
+              </Pressable>
+            </ThemedView>
+          ) : updatedCalendarEvent !== null ? (
+            <ThemedView type="backgroundElement" style={styles.savedNoteBanner}>
+              <View style={styles.savedNoteText}>
+                <ThemedText type="smallBold">Termin verschoben</ThemedText>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  numberOfLines={1}
+                >
+                  {updatedCalendarEvent.updatedEvent.title}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {formatCalendarDate(updatedCalendarEvent.previousEvent.startDate)}
+                  {" → "}
+                  {formatCalendarDate(updatedCalendarEvent.updatedEvent.startDate)}
+                  {" · "}
+                  {updatedCalendarEvent.updatedEvent.allDay
+                    ? "Ganztägig"
+                    : `${formatCalendarTime(updatedCalendarEvent.updatedEvent.startDate)} – ${formatCalendarTime(updatedCalendarEvent.updatedEvent.endDate)}`}
+                </ThemedText>
+                {calendarUpdateUndoError !== null && (
+                  <ThemedText
+                    type="small"
+                    themeColor="danger"
+                    accessibilityLiveRegion="assertive"
+                  >
+                    {calendarUpdateUndoError}
+                  </ThemedText>
+                )}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Verschiebung des Kalendertermins rückgängig machen: ${updatedCalendarEvent.updatedEvent.title}`}
+                disabled={isSaving}
+                onPress={() => void undoCalendarUpdate()}
+                style={({ pressed }) => [
+                  styles.viewNoteButton,
+                  pressed && styles.pressed,
+                  isSaving && styles.disabled,
+                ]}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color={theme.accent} />
+                ) : (
+                  <ThemedText type="smallBold" themeColor="accent">
+                    Rückgängig
                   </ThemedText>
                 )}
               </Pressable>
