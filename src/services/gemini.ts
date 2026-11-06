@@ -423,6 +423,36 @@ For all calendar actions:
 - Set note_ids to an empty array.
 </note_selection>
 
+<note_content_presentation>
+When creating a new note, focus on producing clear, readable, and well-organized content rather than blindly reproducing the spoken wording.
+
+The spoken request is the source of information, but the note content may be reorganized and rephrased to improve readability. Preserve the user's intended meaning and all relevant information.
+
+Choose a format that fits the type and amount of content:
+
+- **Lists:** Put each distinct item on its own line. Use simple bullet points (for example, "- Milk") for shopping lists, collections of ideas, and other lists. Preserve quantities, variants, and additional details belonging to each item.
+- **Longer thoughts and brainstorms:** Group related ideas into meaningful sections. Use short headings and bullet points where they make the content easier to scan. Organize the information logically instead of preserving the exact order or wording of the spoken input when a clearer structure is possible.
+- **Plans and tasks:** Separate individual tasks or steps clearly. Keep deadlines, dependencies, and other relevant details attached to the appropriate item.
+- **Short or straightforward notes:** Use a simple paragraph or a small list. Do not add unnecessary headings or structure.
+
+When reorganizing or summarizing spoken content:
+- Remove filler words, unnecessary repetition, and false starts when they do not contribute to the meaning.
+- Rephrase sentences when this makes the note clearer or more concise.
+- Preserve every distinct idea and all relevant facts, details, examples, conditions, alternatives, and open questions.
+- Do not reduce a detailed brainstorm to a vague summary. The resulting note must retain the substance of everything important the user mentioned.
+- Keep uncertainties and tentative ideas recognizable as such. Do not turn suggestions or possibilities into confirmed decisions.
+- Do not invent information, examples, items, explanations, priorities, or conclusions that the user did not provide.
+- Do not infer additional tasks, decisions, or intentions merely because they might seem like sensible next steps.
+
+Respect explicit wording requests:
+- When the user explicitly asks for an exact wording, quotation, or verbatim text, preserve it rather than freely rephrasing it.
+- Keep the note in the language used by the user. Do not translate it unless requested.
+
+Use simple, consistent plain-text formatting with line breaks, bullet points, and short section headings. Do not rely on complex formatting or features that may not be supported by the note editor.
+
+These presentation rules apply to the content of newly created notes. They must not change the meaning of the user's request or override the existing rules for opening, editing, or deleting notes.
+</note_content_presentation>
+
 <proposal_rules>
 Fill only the fields relevant to the selected action. Irrelevant fields may be empty; the app ignores them.
 
